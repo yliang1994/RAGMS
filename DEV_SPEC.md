@@ -1,6 +1,6 @@
 # DEV_SPEC
 
-Version: `0.0.3`
+Version: `0.0.4`
 
 ## 目录
 
@@ -837,7 +837,7 @@ evaluation:
 	dashboard:
 	  enabled: true
 	  port: 8501
-	  traces_dir: ./logs
+	  traces_file: ./logs/traces.jsonl
 	```
 
 - **切换流程**：
@@ -947,9 +947,8 @@ RAG Pipeline / MCP Tools
 Trace Collector (装饰器 / 回调 / Hook)
         │
         ▼
-JSON Lines Trace Logs
-logs/traces/query-YYYY-MM-DD.jsonl
-logs/traces/ingestion-YYYY-MM-DD.jsonl
+JSON Lines Trace Log
+logs/traces.jsonl
         │
         ▼
 本地 Web Dashboard (Streamlit)
@@ -962,10 +961,8 @@ logs/traces/ingestion-YYYY-MM-DD.jsonl
 
 - 基于 Python `logging` + JSON Formatter，将每次请求的 Trace 数据以 JSON Lines 格式追加写入本地文件。
 - 每行对应一条完整请求记录，而不是零散文本片段；阶段级细节统一收敛在该记录的 `stages` 字段中。
-- 文件建议按日期或链路类型滚动，例如：
-  - `logs/traces/query-YYYY-MM-DD.jsonl`
-  - `logs/traces/ingestion-YYYY-MM-DD.jsonl`
-  - `logs/app/app-YYYY-MM-DD.jsonl`
+- Trace 默认统一写入 `logs/traces.jsonl`；如后续需要按体量归档，可在不改变读取接口的前提下追加滚动策略。
+- 应用通用日志单独写入 `logs/app/` 目录。
 - 结构化日志优先服务于机器读取与本地分析，因此禁止把关键信息只写在自由文本 message 中。
 
 本地 Dashboard 方案：
@@ -1053,7 +1050,7 @@ RAG Pipeline / MCP Tools
           ▼
      TraceManager
           │
-          ├─→ JSONL Trace Logs
+          ├─→ logs/traces.jsonl
           ├─→ SQLite Metadata
           └─→ Chroma Derived Stats
                    │
@@ -1099,7 +1096,7 @@ observability:
 dashboard:
   enabled: true
   port: 8501                     # Streamlit 服务端口
-  traces_dir: ./logs             # Trace 日志文件目录
+  traces_file: ./logs/traces.jsonl  # Trace 日志文件路径
   auto_refresh: true             # 是否自动刷新（轮询新 trace）
   refresh_interval: 5            # 自动刷新间隔（秒）
 ```
@@ -1308,405 +1305,841 @@ Hybrid Search 命中 Chunk（正文含 "[图片描述: 系统采用三层架构.
 
 要求：
 
-- 新增核心模块必须先补单元测试
+- 新增核心模块必须先补单元测试，单元测试应在秒级完成，支持开发者高频执行，立即发现引入的问题
 - 跨模块编排必须有集成测试
 - 面向真实使用链路必须有 E2E 测试
+- 大量快速的单元测试作为基座，少量关键路径的集成测试作为保障，极少数端到端测试验证完整流程
 
 ### 4.2 分层测试策略
 
-#### 单元测试
+#### 4.2.1 单元测试
 
-目标：验证单一组件行为。
+**目标**
 
-覆盖对象：
+单元测试的目标是验证单一模块、单一函数或单一类在明确输入下的行为正确性，尽早发现接口契约、边界条件和异常处理上的问题。该层测试必须聚焦“局部正确性”，而不是承担跨模块编排验证职责。
 
-- 配置加载与校验
-- 工厂实例化
-- chunk 切分逻辑
-- RRF 融合
-- rerank 结果排序
-- SHA256 增量判断
-- citation 生成
-- MCP 参数校验
+单元测试需要重点保证以下几点：
 
-要求：
+- 核心抽象接口在不同实现下都满足相同契约。
+- 纯逻辑模块在正常路径、边界输入和异常路径下行为稳定。
+- 配置驱动与工厂装配逻辑不会因新增 provider 或参数调整而 silently break。
+- 开发者能够在本地高频执行，快速得到反馈，因此运行时间应尽量控制在秒级。
 
-- 不依赖网络
-- 外部模型调用必须 mock
-- pytest 运行时间应尽量控制在秒级
+**覆盖范围**
 
-#### 集成测试
+| 测试对象 | 关注点 | 典型断言 |
+|-----|------|------|
+| 配置加载与校验 | 配置解析、默认值补齐、非法字段拦截 | 缺省配置是否生效、非法 provider 是否抛出预期异常 |
+| 工厂实例化 | `Factory` 是否按配置返回正确实现 | `provider/type` 到实现类的映射是否正确，未知配置是否报错 |
+| 抽象基类契约 | `BaseLLM`、`BaseEmbedding`、`BaseVectorStore` 等接口一致性 | 方法签名、返回结构、异常语义是否符合约定 |
+| chunk 切分逻辑 | 切分边界、重叠策略、元数据保留 | chunk 数量、offset、标题路径、`chunk_id` 稳定性 |
+| RRF 融合 | 多路召回结果融合排序是否正确 | 融合后排名、重复文档去重、不同输入顺序下结果稳定性 |
+| rerank 结果排序 | 重排分数与最终排序逻辑 | Top-N 选择、分数降序、fallback 后结果结构 |
+| SHA256 增量判断 | 去重与增量更新规则 | 内容不变是否跳过、内容变化是否触发重建 |
+| citation 生成 | 引用格式、来源映射、位置定位 | 返回的文档 ID、chunk 引用、页码或来源路径是否正确 |
+| MCP 参数校验 | tool 入参与错误处理 | 必填字段缺失、类型错误、非法枚举值是否被拦截 |
+| Trace 辅助逻辑 | 摘要裁剪、时间统计、敏感字段脱敏 | 输出字段是否完整、敏感信息是否被过滤 |
 
-目标：验证多个模块协作行为。
+**技术选型**
 
-覆盖对象：
+单元测试层统一采用以下技术方案：
 
-- PDF -> Markdown -> chunk -> embedding -> Chroma upsert
-- sparse + dense + RRF + rerank
-- MCP tool -> query engine
-- trace 写入与 Dashboard 数据读取
+- `pytest`：作为主测试框架，负责测试发现、参数化、fixture 管理与断言组织。
+- `unittest.mock` / `pytest-mock`：用于替换外部依赖与副作用调用，例如 LLM API、Embedding API、文件系统访问、时间函数和数据库写入。
+- `pytest-check` 或等价方案：用于支持多断言不中断执行，在同一个测试用例中尽可能收集多个失败点，提升问题定位效率。
 
-要求：
+选型约束如下：
 
-- 使用临时目录和临时 SQLite/Chroma 数据
-- 可用 fake provider 或 mock provider 替代真实大模型
-- 输出需校验结构完整性
+- 单元测试默认不依赖网络，不调用真实外部模型、真实远程数据库或付费 API。
+- 所有外部模型调用必须 mock，且优先 mock 在抽象边界处，而不是深入第三方 SDK 内部。
+- 涉及文件、SQLite、Chroma 等本地依赖时，应优先使用临时目录、内存数据库或 fake 实现，避免污染真实开发数据。
+- 测试应优先覆盖确定性逻辑，避免引入高随机性断言。
 
-#### E2E 测试
+#### 4.2.2 集成测试
 
-目标：验证端到端用户场景。
+**目标**
 
-核心场景：
+集成测试的目标是验证多个模块在真实编排关系下能否正确协作，重点检查接口衔接、数据结构传递、组件装配和局部链路行为是否符合预期。该层测试不追求完整用户视角，而是验证“若干关键模块串起来之后是否还能稳定工作”。
 
-- 导入一个 PDF 集合并完成问答
-- 对已摄取文档执行增量跳过
-- 使用 MCP tool 查询并返回引用
-- 执行一轮评估并在 Dashboard 中可见
+集成测试需要重点覆盖以下风险：
 
-要求：
+- 单元测试通过，但模块之间的输入输出契约不兼容。
+- 配置驱动下的工厂装配正确，但实际串联执行时上下游数据结构不匹配。
+- 本地存储、日志、Trace、MCP 调用等基础设施在联动时出现状态不一致。
+- 某个 provider 的 fake/mock 行为与真实编排路径偏差过大，导致上线前缺少链路级验证。
 
-- 使用最小样例数据
-- 可在 CI 中运行
-- 避免依赖真实付费 API
+**覆盖范围**
+
+| 测试对象 | 关注点 | 典型断言 |
+|-----|------|------|
+| PDF -> Markdown -> chunk -> embedding -> Chroma upsert | Ingestion 主链路中的模块衔接是否正确 | 文档是否被成功切分、向量是否生成、payload 是否完成 upsert |
+| sparse + dense + RRF + rerank | 检索链路中多策略组合是否协同工作 | 稀疏/稠密召回结果是否被正确融合、rerank 后结果结构是否完整 |
+| MCP tool -> query engine | MCP 接口层与内部查询引擎的集成是否正常 | 参数是否正确传递、响应结构是否符合 tool 协议、错误是否被正确包装 |
+| trace 写入与 Dashboard 数据读取 | 可观测性链路是否闭环 | Trace 是否成功落盘、Dashboard 读取后字段是否完整、`trace_id` 是否可检索 |
+| 工厂装配 + 配置切换 | 配置驱动的组件切换是否真正生效 | 切换不同 provider/backend 后，链路是否使用预期实现 |
+| SQLite / Chroma / JSONL 协同 | 本地基础设施之间的数据一致性 | 文档状态、向量写入、Trace 记录之间是否能相互对应 |
+
+**技术选型**
+
+集成测试层统一采用以下技术方案：
+
+- `pytest`：作为集成测试主框架，负责编排测试用例、fixture 生命周期和临时环境管理。
+- `pytest-mock` / `unittest.mock`：用于替换外部 API 调用，但保留系统内部模块之间的真实交互。
+- `tempfile` / pytest 临时目录 fixture：用于创建临时文件系统、临时 SQLite 数据库、临时 Chroma 数据目录。
+- `pytest-check` 或等价方案：在单条集成链路测试中支持多断言不中断执行，尽可能一次性暴露结构、状态和输出上的多个问题。
+
+选型约束如下：
+
+- 集成测试可以使用 fake provider、stub provider 或 mock provider 替代真实大模型，但不应把所有内部模块都 mock 掉，否则会退化成单元测试。
+- 输出校验必须覆盖结构完整性、关键字段、状态变化和副作用结果，而不仅仅是“函数成功返回”。
+- 测试数据应尽量小而完整，既能覆盖关键链路，又能在 CI 中稳定运行。
+- 涉及本地存储时必须使用隔离的临时环境，禁止读写开发者真实数据目录。
+
+#### 4.2.3 E2E 测试
+
+**目标**
+
+E2E 测试的目标是从用户视角验证系统的端到端可用性，确认从输入样例数据到最终用户可见结果的完整链路能够在接近真实使用方式的条件下跑通。该层测试重点不是细抠单个模块细节，而是验证“系统作为一个整体是否可交付”。
+
+E2E 测试需要重点回答以下问题：
+
+- 用户是否能够完成一次完整的文档摄取、检索、问答和评估流程。
+- 关键用户路径在默认配置下是否可运行、可观察、可回溯。
+- 系统在最小真实场景中是否存在单元测试和集成测试无法暴露的编排问题。
+
+**核心场景**：
+
+**场景 1：数据准备（离线摄取）**
+- **测试目标**：验证文档摄取流程的完整性与正确性
+- **测试步骤**：
+  - 准备测试文档（PDF 文件，包含文本、图片、表格等多种元素）
+  - 执行离线摄取脚本，将文档导入知识库
+  - 验证摄取结果：检查生成的 Chunk 数量、元数据完整性、图片描述生成
+  - 验证存储状态：确认向量库和 BM25 索引正确创建
+  - 验证幂等性：重复摄取同一文档，确保不产生重复数据
+- **验证要点**：
+  - Chunk 的切分质量（语义完整性、上下文保留）
+  - 元数据字段完整性（source、page、title、tags 等）
+  - 图片处理结果（Caption 生成、Base64 编码存储）
+  - 向量与稀疏索引的正确性
+
+**场景 2：召回测试**
+- **测试目标**：验证检索系统的召回精度与排序质量
+- **测试步骤**：
+  - 基于已摄取的知识库，准备一组测试查询（包含不同难度与类型）
+  - 执行混合检索（Dense + Sparse + Rerank）
+  - 验证召回结果：检查 Top-K 文档是否包含预期来源
+  - 对比不同检索策略的效果（纯 Dense、纯 Sparse、Hybrid）
+  - 验证 Rerank 的影响：对比重排前后的结果变化
+- **验证要点**：
+  - Hit Rate@K：Top-K 结果命中率是否达标
+  - 排序质量：正确答案是否排在前列（MRR、NDCG）
+  - 边界情况处理：空查询、无结果查询、超长查询
+  - 多模态召回：包含图片的文档是否能通过文本查询召回
+
+**场景 3：MCP Client 功能测试**
+- **测试目标**：验证 MCP Server 与 Client（如 GitHub Copilot）的协议兼容性与功能完整性
+- **测试步骤**：
+  - 启动 MCP Server（Stdio Transport 模式）
+  - 模拟 MCP Client 发送各类 JSON-RPC 请求
+  - 测试工具调用：`query_knowledge_hub`、`list_collections` 等
+  - 验证返回格式：符合 MCP 协议规范（content 数组、structuredContent）
+  - 测试引用透明性：返回结果包含完整的 Citation 信息
+  - 测试多模态返回：包含图片的响应正确编码为 Base64
+- **验证要点**：
+  - 协议合规性：JSON-RPC 2.0 格式、错误码映射
+  - 工具注册：`tools/list` 返回所有可用工具及其 Schema
+  - 响应格式：TextContent 与 ImageContent 的正确组合
+  - 错误处理：无效参数、超时、服务不可用等异常场景
+  - 性能指标：单次请求的端到端延迟（含检索、重排、格式化）
+
+**测试工具**：
+- **BDD 框架**：`behave` 或 `pytest-bdd`（以 Gherkin 语法描述场景）
+- **环境准备**：
+  - 临时测试向量库（独立于生产数据）
+  - 预置的标准测试文档集
+  - 本地 MCP Server 进程（Stdio Transport）
 
 ### 4.3 RAG 质量评估
 
-评估框架必须可插拔，支持：
+**目标**：验证已设计的评估体系（见 3.3.4 评估框架抽象）是否正确实现，并能有效评估 RAG 系统的召回与生成质量。
 
-- Ragas
-- 自定义指标
+**测试要点**：
 
-最低指标集：
+1. **黄金测试集准备**
+   - 构建标准的"问题-答案-来源文档"测试集（JSON 格式）
+   - 初期人工标注核心场景，后期持续积累坏 Case
 
-- `hit_rate`
-- `mrr`
-- `context_precision`
-- `context_recall`
-- `answer_relevancy`
-- `faithfulness`（可在模型成本允许时启用）
+2. **评估框架实现验证**
+   - 验证 Ragas/DeepEval 等评估框架的正确集成
+   - 确认评估接口能输出标准化的指标字典
+   - 测试多评估器并行执行与结果汇总
 
-评估要求：
+3. **关键指标达标验证**
+   - 检索指标：Hit Rate@K ≥ 90%、MRR ≥ 0.8、NDCG@K ≥ 0.85
+   - 生成指标：Faithfulness ≥ 0.9、Answer Relevancy ≥ 0.85
+   - 定期运行评估，监控指标是否回归
 
-- 评估数据集格式统一
-- 支持离线批量评估
-- 评估结果写入 SQLite 和 JSON 文件
-- 每次评估记录 provider、参数、数据集版本、时间戳
+**说明**：本节重点是验证评估体系的工程实现，而非重新设计评估方法。
+
+### 4.4 测试工具链与 CI/CD 集成
+
+**本地开发工作流**：
+- **快速验证**：仅运行单元测试，秒级反馈
+- **完整验证**：单元测试 + 集成测试，生成覆盖率报告
+- **质量评估**：定期执行 RAG 质量测试，监控指标变化
+
+**CI/CD Pipeline 设计**（可选）：
+> **说明**：本地项目不强制要求 CI/CD，但配置自动化测试流程有助于代码质量保障与持续集成实践。
+
+- **单元测试阶段**：每次提交自动触发，验证基础功能，生成覆盖率报告
+- **集成测试阶段**：单元测试通过后执行，验证模块协作
+- **质量评估阶段**：PR 触发，运行完整的 RAG 质量测试，发布评估报告
+
+**测试覆盖率目标**：
+- **单元测试**：核心逻辑覆盖率 ≥ 80%
+- **集成测试**：关键路径覆盖率 100%（如 Ingestion、Hybrid Search）
+- **E2E 测试**：核心用户场景覆盖率 100%（至少 3 个关键流程）
 
 ## 5. 系统架构与模块设计
 
 ### 5.1 整体架构图
 
 ```text
-                           +----------------------+
-                           |   Agent / Client     |
-                           +----------+-----------+
-                                      |
-                               MCP STDIO Tools
-                                      |
-                     +----------------v----------------+
-                     |         MCP Server              |
-                     | server / registry / tools       |
-                     +----------------+----------------+
-                                      |
-                        +-------------v-------------+
-                        |       Query Engine        |
-                        | rewrite / retrieve /      |
-                        | fuse / rerank / answer    |
-                        +------+------+-------------+
-                               |      |
-               +---------------+      +-------------------+
-               |                                      |
-      +--------v--------+                    +--------v--------+
-      | Sparse Retriever|                    | Dense Retriever |
-      | BM25 Index      |                    | Embedding +     |
-      |                 |                    | Chroma Search   |
-      +--------+--------+                    +--------+--------+
-               |                                      |
-               +----------------+  +------------------+
-                                |  |
-                          +-----v--v------+
-                          |   RRF +        |
-                          |   Reranker     |
-                          +-----+----------+
-                                |
-                          +-----v----------+
-                          | Context Builder|
-                          +-----+----------+
-                                |
-                          +-----v----------+
-                          | LLM Answering  |
-                          +----------------+
++----------------------------------------------------------------------------------------------------------------------+
+| Clients 外部调用层                                                                                                    |
+|----------------------------------------------------------------------------------------------------------------------|
+| MCP Client / Claude Desktop / Copilot / Local CLI / Streamlit Dashboard                                              |
++-------------------------------------------------------------+--------------------------------------------------------+
+                                                              |
+                                                      STDIO / Tool Call / Local Service
+                                                              |
++----------------------------------------------------------------------------------------------------------------------+
+| MCP Server 层                                                                                                         |
+|----------------------------------------------------------------------------------------------------------------------|
+| server.py | protocol_handler.py | tool_registry.py | tools/query.py | tools/ingest.py | tools/documents.py          |
++-------------------------------------------------------------+--------------------------------------------------------+
+                                                              |
+                                  +---------------------------+----------------------------+
+                                  |                                                        |
+                                  v                                                        v
++----------------------------------------------------------------------------------------------------------------------+
+| Core 层 (核心业务逻辑)                                                                                                |
+|----------------------------------------------------------------------------------------------------------------------|
+| Query Flow                                                                                                            |
+| - Query Processor -> Hybrid Search -> Reranker(Optional) -> Response Builder                                          |
+| - 输出 MCP Response(TextContent + ImageContent)                                                                        |
+|                                                                                                                       |
+| Ingestion Pipeline (离线数据摄取)                                                                                      |
+| - File Integrity(SHA256) -> Loader(MarkItDown) -> Splitter(Recursive) -> Transform(Enrichment)                      |
+| - Embedding(Dual Path: Dense + Sparse) -> Upsert(Storage)                                                             |
+|                                                                                                                       |
+| Management Flow                                                                                                       |
+| - DataService -> DocumentManager -> TraceService                                                                       |
+|                                                                                                                       |
+| Trace Collector                                                                                                       |
+| - trace context -> stage recorder -> metrics aggregator -> error capture -> trace flush                              |
++-------------------------------------------------------------+--------------------------------------------------------+
+                                                              |
+                                  +---------------------------+----------------------------+
+                                  |                                                        |
+                                  v                                                        v
++----------------------------------------------------------------------------------------------------------------------+
+| Libs 层 (可插拔抽象层)                                                                                                |
+|----------------------------------------------------------------------------------------------------------------------|
+| Abstractions: BaseLoader / BaseSplitter / BaseTransform / BaseLLM / BaseEmbedding / BaseReranker / BaseVectorStore |
+|               / BaseEvaluator                                                                                          |
+| Factories:    loader_factory.py / splitter_factory.py / llm_factory.py / embedding_factory.py / reranker_factory.py |
+|               / vector_store_factory.py / evaluator_factory.py                                                         |
+| Providers:    MarkItDown / RecursiveCharacterTextSplitter / OpenAI / Qwen / DeepSeek / Chroma / Ragas / DeepEval   |
++-------------------------------------------------------------+--------------------------------------------------------+
+                                                              |
+                                                              v
++----------------------------------------------------------------------------------------------------------------------+
+| Storage 层 (存储层)                                                                                                   |
+|----------------------------------------------------------------------------------------------------------------------|
+| Chroma Vector DB + Payload Store                                                                                      |
+| Dense Retrieval Index | Sparse / BM25 Index | SQLite Metadata DB | Image Storage | logs/traces.jsonl | app logs     |
++----------------------------------------------------------------------------------------------------------------------+
 
-
-  +--------------------- Ingestion Pipeline ----------------------+
-  | source docs -> MarkItDown -> image caption -> smart split -> |
-  | LLM enrich -> embedding -> Chroma upsert -> SQLite metadata  |
-  +---------------------------------------------------------------+
-
-  +----------------------+     +------------------+     +------------------+
-  | SQLite Metadata DB   |     | Chroma Vector DB |     | JSONL Trace Logs |
-  +----------------------+     +------------------+     +------------------+
-                    \                   |                          /
-                     \                  |                         /
-                      +-----------------v------------------------+
-                      |       Streamlit Local Dashboard          |
-                      +------------------------------------------+
++----------------------------------------------------------------------------------------------------------------------+
+| Observability 层 (可观测性)                                                                                           |
+|----------------------------------------------------------------------------------------------------------------------|
+| TraceService | JSONL Logger | Metrics Aggregation | Streamlit Dashboard                                               |
+| Pages: 系统总览 / 数据浏览 / Ingestion 管理 / Trace 查看 / 评估面板                                                   |
++----------------------------------------------------------------------------------------------------------------------+
 ```
 
 ### 5.2 完整目录结构树
 
 ```text
-RagServer/
-├── DEV_SPEC.md
-├── README.md
-├── pyproject.toml
-├── pytest.ini
-├── settings.yaml
-├── .env.example
-├── scripts/
-│   ├── ingest.py
-│   ├── query_cli.py
-│   ├── run_mcp_server.py
-│   ├── run_dashboard.py
-│   └── evaluate.py
-├── data/
-│   ├── raw/
-│   ├── processed/
-│   ├── chroma/
-│   ├── sqlite/
-│   ├── eval/
-│   └── cache/
-├── logs/
-│   ├── app/
-│   └── traces/
-├── src/
-│   ├── __init__.py
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── config.py
-│   │   ├── container.py
-│   │   ├── exceptions.py
-│   │   └── settings_models.py
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── interfaces/
-│   │   │   ├── llm.py
-│   │   │   ├── embedding.py
-│   │   │   ├── reranker.py
-│   │   │   ├── vector_store.py
-│   │   │   ├── splitter.py
-│   │   │   ├── evaluator.py
-│   │   │   ├── retriever.py
-│   │   │   ├── converter.py
-│   │   │   └── image_captioner.py
-│   │   ├── models/
-│   │   │   ├── document.py
-│   │   │   ├── chunk.py
-│   │   │   ├── retrieval.py
-│   │   │   ├── trace.py
-│   │   │   └── evaluation.py
-│   │   ├── factories/
-│   │   │   ├── llm_factory.py
-│   │   │   ├── embedding_factory.py
-│   │   │   ├── reranker_factory.py
-│   │   │   ├── vector_store_factory.py
-│   │   │   ├── splitter_factory.py
-│   │   │   ├── evaluator_factory.py
-│   │   │   ├── converter_factory.py
-│   │   │   └── image_caption_factory.py
-│   │   ├── trace/
-│   │   │   ├── trace_context.py
-│   │   │   ├── trace_collector.py
-│   │   │   └── events.py
-│   │   └── utils/
-│   │       ├── hashing.py
-│   │       ├── ids.py
-│   │       ├── time.py
-│   │       └── jsonl.py
-│   ├── providers/
-│   │   ├── llm/
-│   │   │   ├── openai_llm.py
-│   │   │   ├── qwen_llm.py
-│   │   │   └── deepseek_llm.py
-│   │   ├── embedding/
-│   │   │   ├── openai_embedding.py
-│   │   │   ├── qwen_embedding.py
-│   │   │   └── deepseek_embedding.py
-│   │   ├── reranker/
-│   │   │   ├── cross_encoder_reranker.py
-│   │   │   └── llm_reranker.py
-│   │   ├── splitter/
-│   │   │   └── recursive_splitter.py
-│   │   ├── vector_store/
-│   │   │   └── chroma_store.py
-│   │   ├── converter/
-│   │   │   └── markitdown_converter.py
-│   │   └── image_caption/
-│   │       └── vision_llm_captioner.py
-│   ├── ingestion/
-│   │   ├── __init__.py
-│   │   ├── pipeline.py
-│   │   ├── document_registry.py
-│   │   ├── markdown_parser.py
-│   │   ├── chunk_enricher.py
-│   │   ├── image_extractor.py
-│   │   └── services/
-│   │       ├── fingerprint_service.py
-│   │       ├── chunking_service.py
-│   │       ├── embedding_service.py
-│   │       └── upsert_service.py
-│   ├── retrieval/
-│   │   ├── __init__.py
-│   │   ├── pipeline.py
-│   │   ├── query_rewriter.py
-│   │   ├── bm25_retriever.py
-│   │   ├── dense_retriever.py
-│   │   ├── fusion.py
-│   │   ├── rerank_pipeline.py
-│   │   ├── context_builder.py
-│   │   └── answer_generator.py
-│   ├── storage/
-│   │   ├── __init__.py
-│   │   ├── sqlite/
-│   │   │   ├── connection.py
-│   │   │   ├── schema.py
-│   │   │   ├── repositories.py
-│   │   │   └── migrations.py
-│   │   └── bm25/
-│   │       ├── index_store.py
-│   │       └── tokenizer.py
-│   ├── evaluation/
-│   │   ├── __init__.py
-│   │   ├── runner.py
-│   │   ├── dataset_loader.py
-│   │   ├── metrics.py
-│   │   ├── ragas_evaluator.py
-│   │   └── report_writer.py
-│   ├── observability/
-│   │   ├── __init__.py
-│   │   ├── logger.py
-│   │   ├── metrics.py
-│   │   └── trace_service.py
-│   ├── mcp_server/
-│   │   ├── __init__.py
-│   │   ├── server.py
-│   │   ├── protocol_handler.py
-│   │   ├── tool_registry.py
-│   │   └── tools/
-│   │       ├── __init__.py
-│   │       ├── query_knowledge_hub.py
-│   │       ├── list_collections.py
-│   │       └── get_document_summary.py
-│   └── dashboard/
-│       ├── __init__.py
-│       ├── app.py
-│       ├── data_access.py
-│       ├── components.py
-│       └── pages/
-│           ├── overview.py
-│           ├── data_browser.py
-│           ├── ingestion_admin.py
-│           ├── trace_viewer.py
-│           └── evaluation_panel.py
-└── tests/
-    ├── unit/
-    │   ├── test_config.py
-    │   ├── test_factories.py
-    │   ├── test_hashing.py
-    │   ├── test_fusion.py
-    │   ├── test_chunking_service.py
-    │   ├── test_rerank_pipeline.py
-    │   ├── test_protocol_handler.py
-    │   └── test_trace_context.py
-    ├── integration/
-    │   ├── test_ingestion_pipeline.py
-    │   ├── test_query_pipeline.py
-    │   ├── test_mcp_server.py
-    │   ├── test_dashboard_data_access.py
-    │   └── test_evaluation_runner.py
-    ├── e2e/
-    │   ├── test_ingest_and_query.py
-    │   ├── test_incremental_ingestion.py
-    │   └── test_mcp_stdio_runtime.py
-    └── fixtures/
-        ├── sample_pdfs/
-        ├── sample_markdown/
-        ├── sample_images/
-        └── eval_datasets/
+RAGMS/                                                         # 项目根目录
+├── DEV_SPEC.md                                                # 开发规范与设计说明文档
+├── README.md                                                  # 项目介绍与使用说明
+├── pyproject.toml                                             # Python 项目依赖与构建配置
+├── pytest.ini                                                 # pytest 测试框架配置
+├── settings.yaml                                              # 主配置文件，驱动组件切换
+├── .env.example                                               # 环境变量示例模板
+├── .gitignore                                                 # Git 忽略规则
+├── scripts/                                                   # 命令行脚本与本地启动入口
+│   ├── run_mcp_server.py                                      # 启动 MCP Server 的脚本
+│   ├── run_dashboard.py                                       # 启动本地 Dashboard 的脚本
+│   ├── ingest_documents.py                                    # 批量执行文档摄取的脚本
+│   ├── query_cli.py                                           # 本地命令行查询入口
+│   └── run_evaluation.py                                      # 执行评估任务的脚本
+├── data/                                                      # 本地数据目录
+│   ├── raw/                                                   # 原始输入数据
+│   │   ├── documents/                                         # 待摄取原始文档
+│   │   └── datasets/                                          # 原始评估数据集
+│   ├── staging/                                               # 中间产物暂存区
+│   │   ├── markdown/                                          # Loader 输出的 Markdown 中间结果
+│   │   ├── chunks/                                            # Splitter / Transform 产出的 chunk 中间结果
+│   │   └── captions/                                          # 图片描述与多模态增强中间结果
+│   ├── vector_store/                                          # 向量数据库本地存储目录
+│   │   └── chroma/                                            # ChromaDB 数据文件
+│   ├── indexes/                                               # 辅助索引与缓存目录
+│   │   ├── sparse/                                            # 稀疏检索 / BM25 索引数据
+│   │   └── cache/                                             # 检索与处理缓存
+│   ├── metadata/                                              # 元数据存储目录
+│   │   └── ragms.db                                           # SQLite 元数据库
+│   ├── images/                                                # 提取后的图片与关联资源
+│   ├── evaluation/                                            # 评估相关数据目录
+│   │   ├── datasets/                                          # 标准化评估数据集
+│   │   ├── runs/                                              # 每轮评估运行产物
+│   │   └── reports/                                           # 评估报告输出
+│   └── tmp/                                                   # 临时文件目录
+├── logs/                                                      # 日志输出目录
+│   ├── app/                                                   # 应用通用日志
+│   ├── traces.jsonl                                           # Query / Ingestion 统一 Trace 日志文件
+│   └── dashboard/                                             # Dashboard 运行日志
+├── src/                                                       # 源代码主目录
+│   ├── __init__.py                                            # 源码包根初始化文件
+│   └── ragms/                                                 # 项目主 Python 包
+│       ├── __init__.py                                        # 主包初始化文件
+│       ├── runtime/                                           # 运行时装配层
+│       │   ├── __init__.py                                    # runtime 子包初始化文件
+│       │   ├── config.py                                      # 配置读取与合并逻辑
+│       │   ├── settings_models.py                             # 配置模型与校验定义
+│       │   ├── container.py                                   # 依赖注入与对象装配容器
+│       │   └── exceptions.py                                  # 全局异常定义
+│       ├── mcp_server/                                        # MCP Server 层实现
+│       │   ├── __init__.py                                    # MCP Server 子包初始化文件
+│       │   ├── server.py                                      # MCP Server 启动与注册入口
+│       │   ├── protocol_handler.py                            # MCP 协议封装与参数处理
+│       │   ├── tool_registry.py                               # MCP tools 注册中心
+│       │   ├── schemas.py                                     # MCP 输入输出数据结构定义
+│       │   └── tools/                                         # 对外暴露的 MCP 工具实现
+│       │       ├── __init__.py                                # tools 子包初始化文件
+│       │       ├── query.py                                   # 查询知识库工具
+│       │       ├── ingest.py                                  # 文档摄取工具
+│       │       ├── collections.py                             # 集合管理工具
+│       │       ├── documents.py                               # 文档查看与管理工具
+│       │       ├── traces.py                                  # Trace 查询工具
+│       │       └── evaluation.py                              # 评估触发与结果查询工具
+│       ├── core/                                              # 核心业务逻辑层
+│       │   ├── __init__.py                                    # core 子包初始化文件
+│       │   ├── models/                                        # 核心领域模型
+│       │   │   ├── document.py                                # 文档模型定义
+│       │   │   ├── chunk.py                                   # chunk 模型定义
+│       │   │   ├── retrieval.py                               # 检索结果模型定义
+│       │   │   ├── trace.py                                   # Trace 模型定义
+│       │   │   ├── evaluation.py                              # 评估结果模型定义
+│       │   │   └── response.py                                # 响应对象模型定义
+│       │   ├── query_engine/                                  # 在线查询引擎
+│       │   │   ├── __init__.py                                # query_engine 子包初始化文件
+│       │   │   ├── engine.py                                  # 查询主编排入口
+│       │   │   ├── query_processor.py                         # Query Processor：关键词提取与过滤解析
+│       │   │   ├── hybrid_search.py                           # Hybrid Search：Dense + Sparse + RRF
+│       │   │   ├── retrievers/                                # 检索器集合
+│       │   │   │   ├── dense_retriever.py                     # 稠密向量检索器
+│       │   │   │   └── sparse_retriever.py                    # 稀疏 / BM25 检索器
+│       │   │   ├── reranker.py                                # 可选精排器封装
+│       │   │   ├── response_builder.py                        # Response Builder：引用、图片编码、MCP 格式化
+│       │   │   ├── citation_builder.py                        # 引用构建器
+│       │   │   └── answer_generator.py                        # 回答生成器
+│       │   ├── ingestion_pipeline/                            # 离线数据摄取流水线
+│       │   │   ├── __init__.py                                # ingestion_pipeline 子包初始化文件
+│       │   │   ├── pipeline.py                                # 摄取流水线主入口
+│       │   │   ├── file_integrity.py                          # File Integrity：SHA256 去重与增量判断
+│       │   │   ├── stages/                                    # 摄取阶段实现
+│       │   │   │   ├── load.py                                # Loader 解析阶段
+│       │   │   │   ├── split.py                               # 文本切分阶段
+│       │   │   │   ├── transform.py                           # LLM 重写、元数据注入、图片描述阶段
+│       │   │   │   ├── embed.py                               # Dense + Sparse 双路编码阶段
+│       │   │   │   └── upsert.py                              # Chroma/BM25/图片存储写入阶段
+│       │   │   ├── document_registry.py                       # 文档注册表与状态映射
+│       │   │   └── managers/
+│       │   │       └── document_manager.py                    # 文档删除、重建、状态管理
+│       │   ├── management/                                    # 管理操作服务层
+│       │   │   ├── __init__.py                                # management 子包初始化文件
+│       │   │   ├── data_service.py                            # Dashboard 数据浏览服务
+│       │   │   ├── document_manager.py                        # 文档级管理服务
+│       │   │   └── trace_service.py                           # Trace 查询与聚合服务
+│       │   ├── evaluation/                                    # 评估编排模块
+│       │   │   ├── __init__.py                                # evaluation 子包初始化文件
+│       │   │   ├── runner.py                                  # 评估运行入口
+│       │   │   ├── dataset_loader.py                          # 评估数据集加载器
+│       │   │   ├── report_service.py                          # 评估报告生成服务
+│       │   │   └── metrics/                                   # 评估指标实现
+│       │   │       ├── retrieval_metrics.py                   # 检索指标实现
+│       │   │       └── answer_metrics.py                      # 回答质量指标实现
+│       │   └── trace_collector/                               # Trace 收集与管理模块
+│       │       ├── __init__.py                                # trace_collector 子包初始化文件
+│       │       ├── trace_manager.py                           # Trace 管理器
+│       │       ├── trace_models.py                            # Trace 数据结构定义
+│       │       ├── stage_recorder.py                          # 阶段记录器
+│       │       └── trace_utils.py                             # Trace 辅助工具
+│       ├── libs/                                              # 可插拔抽象层
+│       │   ├── __init__.py                                    # libs 子包初始化文件
+│       │   ├── abstractions/                                  # 抽象基类定义
+│       │   │   ├── base_loader.py                             # Loader 抽象基类
+│       │   │   ├── base_splitter.py                           # Splitter 抽象基类
+│       │   │   ├── base_transform.py                          # Transform 抽象基类
+│       │   │   ├── base_llm.py                                # LLM 抽象基类
+│       │   │   ├── base_embedding.py                          # Embedding 抽象基类
+│       │   │   ├── base_reranker.py                           # Reranker 抽象基类
+│       │   │   ├── base_vector_store.py                       # VectorStore 抽象基类
+│       │   │   └── base_evaluator.py                          # Evaluator 抽象基类
+│       │   ├── factories/                                     # 工厂模式实现
+│       │   │   ├── loader_factory.py                          # Loader 工厂
+│       │   │   ├── splitter_factory.py                        # Splitter 工厂
+│       │   │   ├── llm_factory.py                             # LLM 工厂
+│       │   │   ├── embedding_factory.py                       # Embedding 工厂
+│       │   │   ├── reranker_factory.py                        # Reranker 工厂
+│       │   │   ├── vector_store_factory.py                    # VectorStore 工厂
+│       │   │   └── evaluator_factory.py                       # Evaluator 工厂
+│       │   └── providers/                                     # 具体 provider 实现
+│       │       ├── loaders/                                   # Loader 实现集合
+│       │       │   └── markitdown_loader.py                   # MarkItDown 文档加载器
+│       │       ├── splitters/                                 # Splitter 实现集合
+│       │       │   └── recursive_character_splitter.py        # 递归字符切分器
+│       │       ├── llm/                                       # LLM provider 实现
+│       │       │   ├── openai_llm.py                          # OpenAI LLM 实现
+│       │       │   ├── qwen_llm.py                            # Qwen LLM 实现
+│       │       │   └── deepseek_llm.py                        # DeepSeek LLM 实现
+│       │       ├── embeddings/                                # Embedding provider 实现
+│       │       │   ├── openai_embedding.py                    # OpenAI Embedding 实现
+│       │       │   ├── bge_embedding.py                       # BGE Embedding 实现
+│       │       │   ├── jina_embedding.py                      # Jina Embedding 实现
+│       │       │   └── sparse_embedding.py                    # 稀疏向量编码实现
+│       │       ├── rerankers/                                 # Reranker 实现集合
+│       │       │   ├── cross_encoder_reranker.py              # Cross-Encoder 重排器
+│       │       │   └── llm_reranker.py                        # 基于 LLM 的重排器
+│       │       ├── vector_stores/                             # 向量数据库实现集合
+│       │       │   └── chroma_store.py                        # Chroma 向量库实现
+│       │       └── evaluators/                                # 评估器实现集合
+│       │           ├── ragas_evaluator.py                     # Ragas 评估器
+│       │           ├── deepeval_evaluator.py                  # DeepEval 评估器
+│       │           └── custom_metrics_evaluator.py            # 自定义指标评估器
+│       ├── storage/                                           # 存储层实现
+│       │   ├── __init__.py                                    # storage 子包初始化文件
+│       │   ├── sqlite/                                        # SQLite 元数据存储
+│       │   │   ├── connection.py                              # SQLite 连接管理
+│       │   │   ├── schema.py                                  # SQLite 表结构定义
+│       │   │   ├── repositories/                              # SQLite 仓储实现
+│       │   │   │   ├── documents.py                           # 文档仓储
+│       │   │   │   ├── ingestion_history.py                   # 摄取历史仓储
+│       │   │   │   ├── evaluations.py                         # 评估结果仓储
+│       │   │   │   └── traces.py                              # Trace 元数据仓储
+│       │   │   └── migrations/                                # SQLite 迁移脚本目录
+│       │   ├── vector_store/                                  # 向量存储适配层
+│       │   │   └── chroma_client.py                           # Chroma 客户端封装
+│       │   ├── indexes/                                       # 检索索引实现
+│       │   │   ├── dense_index.py                             # 稠密向量索引封装
+│       │   │   ├── bm25_indexer.py                            # BM25 索引器与删除逻辑
+│       │   │   └── bm25_tokenizer.py                          # BM25 分词器实现
+│       │   ├── images/                                        # 图片资源存储层
+│       │   │   └── image_storage.py                           # 图片存储与读取封装
+│       │   └── traces/                                        # Trace 落盘存储层
+│       │       ├── jsonl_writer.py                            # `logs/traces.jsonl` 写入器
+│       │       └── trace_repository.py                        # Trace 仓储封装
+│       ├── observability/                                     # 可观测性实现层
+│       │   ├── __init__.py                                    # observability 子包初始化文件
+│       │   ├── logging/                                       # 日志模块
+│       │   │   ├── logger.py                                  # 日志器封装
+│       │   │   └── json_formatter.py                          # JSON 日志格式化器
+│       │   ├── metrics/                                       # 指标采集模块
+│       │   │   ├── ingestion_metrics.py                       # 摄取指标定义
+│       │   │   ├── query_metrics.py                           # 查询指标定义
+│       │   │   └── evaluation_metrics.py                      # 评估指标定义
+│       │   └── dashboard/                                     # 本地 Dashboard 实现
+│       │       ├── __init__.py                                # dashboard 子包初始化文件
+│       │       ├── app.py                                     # Streamlit 应用入口
+│       │       ├── services/                                  # Dashboard 业务服务层
+│       │       │   ├── data_service.py                        # 数据浏览服务
+│       │       │   ├── document_manager.py                    # 文档管理服务
+│       │       │   └── trace_service.py                       # Trace 查询服务
+│       │       ├── components/                                # 通用 UI 组件
+│       │       │   ├── tables.py                              # 表格组件
+│       │       │   ├── charts.py                              # 图表组件
+│       │       │   └── trace_timeline.py                      # Trace 时间线组件
+│       │       └── pages/                                     # Dashboard 页面集合
+│       │           ├── system_overview.py                     # 系统总览页
+│       │           ├── data_browser.py                        # 数据浏览器页面
+│       │           ├── ingestion_management.py                # Ingestion 管理页面
+│       │           ├── trace_viewer.py                        # Trace 查看页面
+│       │           └── evaluation_panel.py                    # 评估面板页面
+│       └── shared/                                            # 通用共享模块
+│           ├── __init__.py                                    # shared 子包初始化文件
+│           ├── enums.py                                       # 通用枚举定义
+│           ├── constants.py                                   # 通用常量定义
+│           └── utils/                                         # 通用工具函数
+│               ├── hashing.py                                 # 哈希计算工具
+│               ├── ids.py                                     # ID 生成工具
+│               ├── clock.py                                   # 时间处理工具
+│               ├── io.py                                      # 文件与 IO 工具
+│               └── masking.py                                 # 敏感信息脱敏工具
+├── tests/                                                     # 测试代码主目录
+│   ├── unit/                                                  # 单元测试
+│   │   ├── runtime/                                           # runtime 层单元测试
+│   │   │   ├── test_config.py                                 # 配置模块测试
+│   │   │   └── test_container.py                              # 容器装配测试
+│   │   ├── libs/                                              # 抽象层与工厂层单元测试
+│   │   │   ├── test_llm_factory.py                            # LLM 工厂测试
+│   │   │   ├── test_embedding_factory.py                      # Embedding 工厂测试
+│   │   │   ├── test_vector_store_factory.py                   # VectorStore 工厂测试
+│   │   │   └── test_splitter_factory.py                       # Splitter 工厂测试
+│   │   ├── core/                                              # 核心业务层单元测试
+│   │   │   ├── query_engine/                                  # 查询引擎单元测试
+│   │   │   │   ├── test_rrf.py                                # RRF 融合测试
+│   │   │   │   ├── test_rerank_pipeline.py                    # 重排流水线测试
+│   │   │   │   ├── test_citation_builder.py                   # 引用构建器测试
+│   │   │   │   └── test_context_builder.py                    # 上下文构建器测试
+│   │   │   ├── ingestion_pipeline/                            # 摄取流水线单元测试
+│   │   │   │   ├── test_fingerprint_service.py                # 指纹服务测试
+│   │   │   │   ├── test_split_stage.py                        # 切分阶段测试
+│   │   │   │   └── test_metadata_service.py                   # 元数据服务测试
+│   │   │   ├── evaluation/                                    # 评估模块单元测试
+│   │   │   │   └── test_metrics.py                            # 指标计算测试
+│   │   │   └── trace_collector/                               # Trace 模块单元测试
+│   │   │       ├── test_trace_manager.py                      # Trace 管理器测试
+│   │   │       └── test_trace_utils.py                        # Trace 工具测试
+│   │   ├── mcp_server/                                        # MCP Server 单元测试
+│   │   │   ├── test_protocol_handler.py                       # 协议处理器测试
+│   │   │   └── test_tools_schema.py                           # tool schema 测试
+│   │   └── observability/                                     # 可观测性模块单元测试
+│   │       ├── test_json_formatter.py                         # JSON 格式化器测试
+│   │       └── test_traces_reader.py                          # Trace 读取器测试
+│   ├── integration/                                           # 集成测试
+│   │   ├── test_ingestion_pipeline.py                         # 摄取流水线集成测试
+│   │   ├── test_query_engine.py                               # 查询引擎集成测试
+│   │   ├── test_mcp_server_tools.py                           # MCP tools 集成测试
+│   │   ├── test_trace_write_and_read.py                       # Trace 写入与读取集成测试
+│   │   ├── test_dashboard_data_access.py                      # Dashboard 数据访问集成测试
+│   │   └── test_evaluation_runner.py                          # 评估运行器集成测试
+│   ├── e2e/                                                   # 端到端测试
+│   │   ├── test_ingest_query_answer.py                        # 文档摄取后查询问答 E2E 测试
+│   │   ├── test_incremental_ingestion_skip.py                 # 增量摄取跳过逻辑 E2E 测试
+│   │   ├── test_mcp_stdio_flow.py                             # MCP STDIO 调用链路 E2E 测试
+│   │   └── test_evaluation_visible_in_dashboard.py            # 评估结果在 Dashboard 可见性测试
+│   ├── fixtures/                                              # 测试样例数据
+│   │   ├── documents/                                         # 文档样例
+│   │   ├── markdown/                                          # Markdown 样例
+│   │   ├── images/                                            # 图片样例
+│   │   ├── traces/                                            # Trace 样例
+│   │   └── evaluation/                                        # 评估数据样例
+│   ├── fakes/                                                 # fake provider 与假实现
+│   │   ├── fake_llm.py                                        # 假 LLM 实现
+│   │   ├── fake_embedding.py                                  # 假 Embedding 实现
+│   │   ├── fake_reranker.py                                   # 假 Reranker 实现
+│   │   ├── fake_vector_store.py                               # 假 VectorStore 实现
+│   │   └── fake_evaluator.py                                  # 假 Evaluator 实现
+│   └── conftest.py                                            # pytest 全局 fixtures 与钩子
+└── docs/                                                      # 补充文档目录
+    ├── architecture/                                          # 架构设计文档
+    ├── api/                                                   # API / tool 文档
+    └── dashboards/                                            # Dashboard 说明文档
 ```
 
 ### 5.3 模块职责说明表
 
-| 模块 | 主要职责 | 关键对象 |
+#### 5.3.1 `runtime` 层
+
+| 模块 | 职责 | 关键技术点 |
 |---|---|---|
-| `app` | 配置加载、依赖装配、全局异常 | `AppConfig`, `Container` |
-| `core.interfaces` | 抽象边界定义 | `BaseLLM`, `BaseVectorStore` |
-| `core.factories` | provider 实例化 | `LLMFactory`, `VectorStoreFactory` |
-| `core.models` | 域模型 | `Chunk`, `RetrievalResult`, `TraceEvent` |
-| `providers` | 第三方能力适配 | `OpenAILLM`, `ChromaStore` |
-| `ingestion` | 文档摄取编排 | `IngestionPipeline` |
-| `retrieval` | 问答检索编排 | `QueryPipeline` |
-| `storage.sqlite` | 元数据持久化 | repositories, schema |
-| `storage.bm25` | 稀疏索引存储与查询 | `BM25IndexStore` |
-| `evaluation` | RAG 评估执行与报表 | `EvaluationRunner` |
-| `observability` | 日志、指标、trace | `TraceService`, `JsonlLogger` |
-| `mcp_server` | MCP 服务与 tools | `MCPServer`, tool handlers |
-| `dashboard` | 本地可视化面板 | Streamlit pages |
-| `scripts` | CLI 入口 | ingest/query/evaluate/server |
+| `runtime/config.py` | 读取 `settings.yaml`、环境变量与默认配置，生成统一配置对象。 | 配置分层合并、环境变量覆盖、路径标准化。 |
+| `runtime/settings_models.py` | 定义配置模型与字段校验规则，约束 provider、backend、参数结构。 | 强类型配置模型、默认值注入、非法配置快速失败。 |
+| `runtime/container.py` | 根据配置装配 `MCP Server`、`Query Engine`、`Ingestion Pipeline`、`TraceManager` 等核心对象。 | 依赖注入、工厂装配、运行时对象生命周期管理。 |
+| `runtime/exceptions.py` | 定义跨层共享的异常类型，统一错误语义。 | 异常分层、统一错误码/错误类别、便于日志与 Trace 收敛。 |
+
+#### 5.3.2 `mcp_server` 层
+
+| 模块 | 职责 | 关键技术点 |
+|---|---|---|
+| `mcp_server/server.py` | 初始化 MCP Server 并挂载所有工具入口。 | 基于 Python MCP SDK、STDIO Transport、本地工具暴露。 |
+| `mcp_server/protocol_handler.py` | 处理工具调用的参数解析、校验、响应包装与异常转换。 | 协议解耦、统一响应结构、错误拦截。 |
+| `mcp_server/tool_registry.py` | 维护工具注册表，集中定义哪些能力对外可见。 | 工具声明集中管理、便于扩展和测试。 |
+| `mcp_server/schemas.py` | 定义 MCP 工具入参与出参结构。 | 请求/响应 schema、类型约束、兼容性控制。 |
+| `mcp_server/tools/query.py` | 暴露查询知识库能力，调用 `Query Processor / Hybrid Search / Response Builder`。 | MCP 入参解析、Query Flow 透传、TextContent/ImageContent 输出。 |
+| `mcp_server/tools/ingest.py` | 暴露离线摄取能力，调用 `Ingestion Pipeline`。 | 批量文档受理、增量跳过、强制重建。 |
+| `mcp_server/tools/collections.py` | 提供集合维度的查询与管理能力。 | 集合枚举、状态汇总、基础管理接口。 |
+| `mcp_server/tools/documents.py` | 提供文档查看、摘要查询、状态回溯能力。 | 文档级回溯、与 SQLite 元数据联动。 |
+| `mcp_server/tools/traces.py` | 提供 Trace 检索与详情查询能力。 | 按 `trace_id` 查询、链路可视化数据输出。 |
+| `mcp_server/tools/evaluation.py` | 提供评估任务触发与结果查询能力。 | 评估编排入口、结果结构化输出。 |
+
+#### 5.3.3 `core` 层
+
+| 模块 | 职责 | 关键技术点 |
+|---|---|---|
+| `core/models/` | 定义文档、chunk、检索结果、Trace、评估结果等领域模型。 | 强类型领域建模、跨模块统一数据契约。 |
+| `core/query_engine/engine.py` | 查询链路主编排器，串联 Query Processor、Hybrid Search、Reranker 与 Response Builder。 | 在线 Query Flow 编排、模块解耦、统一返回结构。 |
+| `core/query_engine/query_processor.py` | 处理用户查询的关键词提取、同义词扩展与 metadata filter 解析。 | Query 预处理、过滤条件解析、输入归一化。 |
+| `core/query_engine/hybrid_search.py` | 统一编排 Dense Retrieval、Sparse Retrieval 与 RRF Fusion。 | 双路检索并行、RRF 融合、Top-M 候选生成。 |
+| `core/query_engine/retrievers/` | 实现 Dense Retrieval 与 Sparse Retrieval。 | 向量检索、BM25 检索、检索结果标准化。 |
+| `core/query_engine/reranker.py` | 对候选结果执行可选重排。 | CrossEncoder / LLM / None 三种模式切换。 |
+| `core/query_engine/response_builder.py` | 生成 MCP 最终响应，附带引用和图片内容。 | 引用拼装、图片 Base64 编码、MCP 格式封装。 |
+| `core/query_engine/citation_builder.py` | 从检索结果构建引用信息。 | chunk 溯源、路径/页码映射、引用规范化。 |
+| `core/query_engine/answer_generator.py` | 调用 LLM 生成最终回答。 | 统一 LLM 接口、答案生成、上下文使用控制。 |
+| `core/ingestion_pipeline/pipeline.py` | 离线摄取主编排器，串联 File Integrity、Loader、Splitter、Transform、Embedding、Upsert。 | Ingestion Flow 编排、跳过策略、幂等处理。 |
+| `core/ingestion_pipeline/file_integrity.py` | 负责 SHA256 指纹计算与“未变更则跳过”逻辑。 | 文件完整性校验、增量摄取、跳过策略。 |
+| `core/ingestion_pipeline/stages/load.py` | 将 PDF 转为 Markdown，并提取图片与元数据。 | MarkItDown、图片提取、文档标准化。 |
+| `core/ingestion_pipeline/stages/split.py` | 按语义边界进行切分并保留图片引用。 | Recursive Splitter、`image_refs` 保留。 |
+| `core/ingestion_pipeline/stages/transform.py` | 对 Chunk 做 LLM 重写、元数据注入和图片描述增强。 | Enrichment、多模态文本融合、Metadata Injection。 |
+| `core/ingestion_pipeline/stages/embed.py` | 执行 Dense + Sparse 双路编码。 | 双路 Embedding、批处理、向量归一化。 |
+| `core/ingestion_pipeline/stages/upsert.py` | 将向量、Chunk、图片和索引结果写入存储。 | Chroma Upsert、BM25 Index、图片存储、幂等写入。 |
+| `core/ingestion_pipeline/document_registry.py` | 维护文档登记、状态变更与来源映射。 | 文档注册、状态流转、来源追踪。 |
+| `core/management/data_service.py` | 为 Dashboard 提供文档列表、Chunk 详情、图片预览等数据读取能力。 | Chroma 元数据查询、图片列表聚合、只读数据服务。 |
+| `core/management/document_manager.py` | 负责文档删除、重建和管理操作。 | Chroma 删除、BM25 索引移除、图片删除、完整性记录清理。 |
+| `core/management/trace_service.py` | 提供 Trace 日志读取、分类和详情查询能力。 | 读取 `logs/traces.jsonl`、按 `trace_type` 分类、返回链路详情。 |
+| `core/evaluation/runner.py` | 执行检索/问答评估任务。 | 多评估后端组合、批量运行、结果汇总。 |
+| `core/evaluation/dataset_loader.py` | 加载并标准化评估数据集。 | 数据集 schema 统一、离线评估输入收敛。 |
+| `core/evaluation/report_service.py` | 生成综合评估报告。 | 指标聚合、实验对比、报告落盘。 |
+| `core/evaluation/metrics/` | 实现检索指标与回答质量指标。 | `hit_rate`、`MRR`、`context_precision`、`answer_relevancy` 等。 |
+| `core/trace_collector/trace_manager.py` | 管理一次请求的 Trace 生命周期。 | `trace_id` 生成、阶段注册、异常捕获、最终落盘。 |
+| `core/trace_collector/trace_models.py` | 定义 `QueryTrace`、`IngestionTrace`、`StageTrace` 等结构。 | 统一 Trace 数据契约、结构化日志模型。 |
+| `core/trace_collector/stage_recorder.py` | 记录阶段耗时、输入输出摘要和指标。 | 阶段级打点、指标聚合、失败节点定位。 |
+| `core/trace_collector/trace_utils.py` | 提供摘要裁剪、异常序列化、敏感字段脱敏等能力。 | Trace 安全落盘、日志可读性优化。 |
+
+#### 5.3.4 `libs` 层
+
+| 模块 | 职责 | 关键技术点 |
+|---|---|---|
+| `libs/abstractions/` | 定义 Loader、Splitter、Transform、LLM、Embedding、Reranker、VectorStore、Evaluator 抽象基类。 | 抽象接口统一、实现可插拔、上层调用解耦。 |
+| `libs/factories/loader_factory.py` | 根据配置实例化 Loader。 | 配置驱动、provider 切换、默认实现选择。 |
+| `libs/factories/splitter_factory.py` | 根据配置实例化 Splitter。 | 统一切分接口、支持不同切分策略替换。 |
+| `libs/factories/llm_factory.py` | 根据配置实例化 LLM。 | 多 provider 屏蔽、认证与请求格式差异收敛。 |
+| `libs/factories/embedding_factory.py` | 根据配置实例化 Embedding。 | Dense / Sparse 双路编码支持、批量请求统一。 |
+| `libs/factories/reranker_factory.py` | 根据配置实例化 Reranker。 | Cross-Encoder / LLM Rerank 插拔切换。 |
+| `libs/factories/vector_store_factory.py` | 根据配置实例化向量存储后端。 | Chroma 默认实现、接口保持可替换。 |
+| `libs/factories/evaluator_factory.py` | 根据配置实例化评估器。 | ragas / DeepEval / 自定义评估器统一装配。 |
+| `libs/providers/loaders/markitdown_loader.py` | 默认文档加载器，实现 PDF 到 Markdown 的标准化输出。 | MarkItDown 接入、canonical Markdown 输出。 |
+| `libs/providers/splitters/recursive_character_splitter.py` | 默认文本切分器实现。 | LangChain `RecursiveCharacterTextSplitter`。 |
+| `libs/providers/llm/*.py` | 不同 LLM provider 的实现层。 | OpenAI / Qwen / DeepSeek 适配、统一 `chat()` 接口。 |
+| `libs/providers/embeddings/*.py` | 不同 Embedding provider 的实现层。 | 统一 `embed()` 接口、维度归一化、批处理。 |
+| `libs/providers/rerankers/*.py` | 不同重排器的实现层。 | 精排模型封装、结果分数统一。 |
+| `libs/providers/vector_stores/chroma_store.py` | 默认向量存储实现。 | Chroma 封装、payload + vector 原子写入。 |
+| `libs/providers/evaluators/*.py` | 各类评估后端实现。 | 标准化 `evaluate()` 接口、指标字典输出。 |
+
+#### 5.3.5 `storage` 层
+
+| 模块 | 职责 | 关键技术点 |
+|---|---|---|
+| `storage/sqlite/connection.py` | 管理 SQLite 连接与事务。 | 本地优先、轻量持久化、事务控制。 |
+| `storage/sqlite/schema.py` | 定义文档、摄取历史、评估、Trace 等表结构。 | 元数据建模、可迁移 schema。 |
+| `storage/sqlite/repositories/` | 封装文档、摄取历史、评估结果、Trace 元数据的读写。 | Repository 模式、业务存储解耦。 |
+| `storage/sqlite/migrations/` | 存放 SQLite 迁移脚本。 | 版本化 schema 管理。 |
+| `storage/vector_store/chroma_client.py` | 封装 Chroma 客户端访问。 | 向量写入、相似度查询、collection 管理。 |
+| `storage/indexes/dense_index.py` | 稠密检索索引访问层。 | Dense Vector Search 封装。 |
+| `storage/indexes/bm25_indexer.py` | 稀疏索引访问层与文档移除能力。 | BM25 建索引、删索引、稀疏检索支持。 |
+| `storage/indexes/bm25_tokenizer.py` | 为 BM25 检索提供分词与标准化。 | 中文/混合文本分词、稀疏索引预处理。 |
+| `storage/images/image_storage.py` | 存储和读取图片资源。 | 图片落盘、路径管理、文档删除级联清理。 |
+| `storage/traces/jsonl_writer.py` | 将 Trace 以 JSONL 形式写入本地文件。 | 结构化日志、统一写入 `logs/traces.jsonl`。 |
+| `storage/traces/trace_repository.py` | 封装 Trace 的查询与存储接口。 | Trace 落盘抽象、供 Dashboard / tools 复用。 |
+
+#### 5.3.6 `observability` 层
+
+| 模块 | 职责 | 关键技术点 |
+|---|---|---|
+| `observability/logging/logger.py` | 提供统一日志器入口。 | Python `logging` 封装、模块化日志管理。 |
+| `observability/logging/json_formatter.py` | 将日志和 Trace 格式化为 JSON。 | JSON Lines、结构化字段输出。 |
+| `observability/metrics/ingestion_metrics.py` | 定义和汇总摄取链路指标。 | 文档数、chunk 数、阶段耗时统计。 |
+| `observability/metrics/query_metrics.py` | 定义和汇总查询链路指标。 | 召回数量、rerank 耗时、总响应耗时。 |
+| `observability/metrics/evaluation_metrics.py` | 定义和汇总评估链路指标。 | 评估结果聚合、实验对比指标。 |
+| `observability/dashboard/app.py` | 本地 Streamlit Dashboard 入口。 | 本地 Web UI、离线可运行。 |
+| `observability/dashboard/services/data_service.py` | 为 Dashboard 的“数据浏览”页面提供只读数据访问。 | 数据聚合、只读服务、与页面逻辑解耦。 |
+| `observability/dashboard/services/document_manager.py` | 为 Dashboard 的“摄取管理”页面提供管理操作入口。 | 删除、重建、状态刷新。 |
+| `observability/dashboard/services/trace_service.py` | 为 Dashboard 的“Trace 查看”页面提供查询能力。 | 读取 `logs/traces.jsonl`、按类型过滤、详情展开。 |
+| `observability/dashboard/components/` | 封装通用表格、图表和 Trace 时间线组件。 | 可复用 UI 组件、动态渲染。 |
+| `observability/dashboard/pages/system_overview.py` | 展示系统总览与核心指标。 | 汇总视图、趋势展示。 |
+| `observability/dashboard/pages/data_browser.py` | 浏览集合、文档、chunk 与元数据。 | 数据检索、回溯与过滤。 |
+| `observability/dashboard/pages/ingestion_management.py` | 管理摄取任务与文档状态。 | 任务列表、跳过/失败/重建视图。 |
+| `observability/dashboard/pages/trace_viewer.py` | 展示 Query / Ingestion 两类 Trace 详情。 | 按 `trace_type` 分类、按 `trace_id` 查看链路。 |
+| `observability/dashboard/pages/evaluation_panel.py` | 展示评估结果与实验对比。 | 多后端评估结果聚合、case-by-case 分析。 |
+
+#### 5.3.7 `shared` 层
+
+| 模块 | 职责 | 关键技术点 |
+|---|---|---|
+| `shared/enums.py` | 定义跨层共享的枚举常量。 | 状态统一、减少魔法字符串。 |
+| `shared/constants.py` | 定义项目级共享常量。 | 配置键、默认值、目录约定集中管理。 |
+| `shared/utils/hashing.py` | 提供哈希计算能力。 | SHA256 指纹、内容去重。 |
+| `shared/utils/ids.py` | 提供稳定 ID 生成能力。 | `document_id`、`chunk_id`、`trace_id` 生成。 |
+| `shared/utils/clock.py` | 提供时间处理工具。 | 时间戳生成、耗时计算、统一时间口径。 |
+| `shared/utils/io.py` | 提供文件与 IO 通用封装。 | 路径管理、文件读写、目录初始化。 |
+| `shared/utils/masking.py` | 提供敏感字段脱敏工具。 | 日志与 Trace 安全输出。 |
 
 ### 5.4 数据流说明
 
-#### 5.4.1 Ingestion Flow
+#### 5.4.1 离线数据摄取流 (Ingestion Flow)
 
-```text
-PDF
- -> MarkItDown 转 Markdown
- -> Markdown 解析
- -> 图片提取
- -> Vision LLM 图片描述
- -> 智能分块
- -> LLM 重写/元数据注入
- -> 生成 chunk 与 metadata
- -> 稠密 Embedding
- -> Chroma Upsert
- -> BM25 索引更新
- -> SQLite 文档与任务状态落库
- -> JSONL Trace 写入
+```
+原始文档 (PDF)
+      │
+      ▼
+┌─────────────────┐     未变更则跳过
+│ File Integrity  │───────────────────────────► 结束
+│   (SHA256)      │
+└────────┬────────┘
+         │ 新文件/已变更
+         ▼
+┌─────────────────┐
+│     Loader      │  PDF → Markdown + 图片提取 + 元数据收集
+│   (MarkItDown)  │
+└────────┬────────┘
+         │ Document (text + metadata.images)
+         ▼
+┌─────────────────┐
+│    Splitter     │  按语义边界切分，保留图片引用
+│ (Recursive)     │
+└────────┬────────┘
+         │ Chunks[] (with image_refs)
+         ▼
+┌─────────────────┐
+│   Transform     │  LLM 重写 + 元数据注入 + 图片描述生成
+│ (Enrichment)    │
+└────────┬────────┘
+         │ Enriched Chunks[] (with captions in text)
+         ▼
+┌─────────────────┐
+│   Embedding     │  Dense (OpenAI) + Sparse (BM25) 双路编码
+│  (Dual Path)    │
+└────────┬────────┘
+         │ Vectors + Chunks + Metadata
+         ▼
+┌─────────────────┐
+│    Upsert       │  Chroma Upsert (幂等) + BM25 Index + 图片存储
+│   (Storage)     │
+└─────────────────┘
 ```
 
-#### 5.4.2 Query Flow
+#### 5.4.2 在线查询流 (Query Flow)
 
-```text
-User Query
- -> Query 预处理
- -> Query 改写
- -> BM25 检索
- -> Dense 检索
- -> RRF 融合
- -> 粗排截断
- -> Cross-Encoder / LLM Rerank
- -> Context 组装
- -> LLM 生成答案
- -> Citation 生成
- -> MCP Tool 返回结果
- -> JSONL Trace 写入
 ```
+用户查询 (via MCP Client)
+      │
+      ▼
+┌─────────────────┐
+│  MCP Server     │  JSON-RPC 解析，工具路由
+│ (Stdio Transport)│
+└────────┬────────┘
+         │ query + params
+         ▼
+┌─────────────────┐
+│ Query Processor │  关键词提取 + 同义词扩展 + Metadata 解析
+│                 │
+└────────┬────────┘
+         │ processed_query + filters
+         ▼
+┌─────────────────────────────────────────────┐
+│              Hybrid Search                  │
+│  ┌─────────────┐          ┌─────────────┐   │
+│  │Dense Retrieval│  并行   │Sparse Retrieval│   │
+│  │ (Embedding)  │◄───────►│  (BM25)     │   │
+│  └──────┬──────┘          └──────┬──────┘   │
+│         │                        │          │
+│         └────────┬───────────────┘          │
+│                  ▼                          │
+│         ┌─────────────┐                     │
+│         │   Fusion    │  RRF 融合           │
+│         │   (RRF)     │                     │
+│         └──────┬──────┘                     │
+└────────────────┼────────────────────────────┘
+                 │ Top-M 候选
+                 ▼
+┌─────────────────┐
+│    Reranker     │  CrossEncoder / LLM / None
+│   (Optional)    │
+└────────┬────────┘
+         │ Top-K 精排结果
+         ▼
+┌─────────────────┐
+│ Response Builder│  引用生成 + 图片 Base64 编码 + MCP 格式化
+│                 │
+└────────┬────────┘
+         │ MCP Response (TextContent + ImageContent)
+         ▼
+返回给 MCP Client (Copilot / Claude Desktop)
+```
+
+#### 5.4.3 管理操作流 (Management Flow)
+
+```
+Dashboard (Streamlit UI)
+      │
+      ├─── 数据浏览 ──────────────────────────────────────────┐
+      │                                                       │
+      │    DataService                                        │
+      │    ├── ChromaStore.get_by_metadata(source=...)        │
+      │    ├── ImageStorage.list_images(collection, doc_hash) │
+      │    └── 返回文档列表 / Chunk 详情 / 图片预览            │
+      │                                                       │
+      ├─── Ingestion 管理 ────────────────────────────────────┤
+      │                                                       │
+      │    触发摄取：                                          │
+      │    ├── IngestionPipeline.run(path, collection,        │
+      │    │                         on_progress=callback)    │
+      │    └── st.progress() 实时更新进度                      │
+      │                                                       │
+      │    删除文档：                                          │
+      │    ├── DocumentManager.delete_document(source, col)   │
+      │    │   ├── ChromaStore.delete_by_metadata(source=...) │
+      │    │   ├── BM25Indexer.remove_document(source=...)    │
+      │    │   ├── ImageStorage.delete_images(col, doc_hash)  │
+      │    │   └── FileIntegrity.remove_record(file_hash)     │
+      │    └── 刷新文档列表                                    │
+      │                                                       │
+      └─── Trace 查看 ───────────────────────────────────────┘
+           │
+           TraceService
+           ├── 读取 logs/traces.jsonl
+           ├── 按 trace_type 分类 (query / ingestion)
+           └── 返回 Trace 列表与详情
+```
+
 
 ### 5.5 配置驱动设计示例
 
 ```yaml
 app:
-  name: rag-server
+  name: ragms
   env: local
   log_level: INFO
+  default_collection: knowledge_hub
 
-storage:
-  sqlite_path: data/sqlite/rag.db
-  chroma_path: data/chroma
-  bm25_index_path: data/cache/bm25
+runtime:
+  settings_file: settings.yaml
+  env_file: .env
+  fail_fast_on_invalid_config: true
+
+mcp:
+  transport: stdio
+  server_name: ragms-mcp-server
+  tools:
+    - query
+    - ingest
+    - collections
+    - documents
+    - traces
+    - evaluation
 
 models:
   llm:
+    provider: openai
+    model: gpt-4.1-mini
+    api_key_env: OPENAI_API_KEY
+    temperature: 0.1
+    max_tokens: 2048
+  transform_llm:
     provider: openai
     model: gpt-4.1-mini
     api_key_env: OPENAI_API_KEY
@@ -1715,75 +2148,130 @@ models:
     model: gpt-4.1-mini
     api_key_env: OPENAI_API_KEY
   embedding:
-    provider: openai
-    model: text-embedding-3-large
-    api_key_env: OPENAI_API_KEY
+    dense:
+      provider: openai
+      model: text-embedding-3-large
+      api_key_env: OPENAI_API_KEY
+      batch_size: 64
+    sparse:
+      provider: bm25
+      tokenizer: default
   reranker:
-    type: cross_encoder
+    mode: cross_encoder   # cross_encoder | llm | none
     model: BAAI/bge-reranker-base
-
-rag:
-  default_collection: knowledge_hub
-  citation_enabled: true
-  no_answer_policy: grounded_only
+    enabled: true
 
 ingestion:
-  converter:
-    type: markitdown
+  file_integrity:
+    enabled: true
+    algorithm: sha256
+    skip_unchanged: true
+  loader:
+    provider: markitdown
+    extract_images: true
+    output_format: markdown
   splitter:
-    provider: langchain_recursive
+    provider: recursive_character
     chunk_size: 900
     chunk_overlap: 150
     separators: ["\n## ", "\n### ", "\n\n", "\n", "。", " ", ""]
-  enhancement:
+  transform:
     rewrite_for_retrieval: true
     inject_metadata_text: true
     image_captioning: true
-  incremental:
-    enabled: true
-    strategy: sha256_skip
+    enrich_metadata: true
+  embedding:
+    dual_path: true
+    dense_enabled: true
+    sparse_enabled: true
+  upsert:
+    vector_backend: chroma
+    bm25_enabled: true
+    image_storage_enabled: true
+    idempotent: true
 
-retrieval:
-  sparse:
-    provider: bm25
-    top_k: 30
-  dense:
-    top_k: 30
-  fusion:
-    type: rrf
-    rrf_k: 60
-  rerank:
+query:
+  processor:
+    keyword_extraction: true
+    synonym_expansion: true
+    parse_metadata_filters: true
+  hybrid_search:
+    dense_top_k: 30
+    sparse_top_k: 30
+    fusion:
+      type: rrf
+      rrf_k: 60
+    candidate_top_m: 20
+  reranker:
     enabled: true
-    candidate_top_n: 20
-    final_top_n: 8
-  answer:
-    max_context_chunks: 8
+    backend: cross_encoder
+    final_top_k: 8
+  response_builder:
+    include_citations: true
+    include_images: true
+    image_encoding: base64
+    mcp_content_types: [text, image]
+
+storage:
+  sqlite:
+    path: data/metadata/ragms.db
+  chroma:
+    path: data/vector_store/chroma
+    collection_prefix: ragms_
+  bm25:
+    index_dir: data/indexes/sparse
+  images:
+    dir: data/images
+  traces:
+    file: logs/traces.jsonl
+  app_logs:
+    dir: logs/app
 
 observability:
   trace_enabled: true
-  trace_dir: logs/traces
-  app_log_dir: logs/app
-  jsonl_enabled: true
+  trace_service:
+    classify_by: trace_type
+    supported_types: [query, ingestion]
+  logging:
+    jsonl_enabled: true
+    formatter: json
+  metrics:
+    ingestion_enabled: true
+    query_enabled: true
+    evaluation_enabled: true
 
 evaluation:
-  default_dataset_dir: data/eval
-  evaluators:
+  dataset_dir: data/evaluation/datasets
+  reports_dir: data/evaluation/reports
+  backends:
     - type: ragas
-    - type: custom
-      metrics: [hit_rate, mrr]
-
-mcp:
-  transport: stdio
-  server_name: rag-mcp-server
-  tools:
-    - query_knowledge_hub
-    - list_collections
-    - get_document_summary
+    - type: custom_metrics
+      metrics: [hit_rate, mrr, context_precision, answer_relevancy]
 
 dashboard:
   enabled: true
-  title: RAG Local Dashboard
+  title: RAGMS Local Dashboard
+  auto_refresh: true
+  services:
+    data_service: true
+    document_manager: true
+    trace_service: true
+  pages:
+    - system_overview
+    - data_browser
+    - ingestion_management
+    - trace_viewer
+    - evaluation_panel
 ```
+
+配置设计说明：
+
+- `ingestion.file_integrity` 对应 5.4.1 中的 `File Integrity (SHA256)` 节点，控制是否跳过未变更文件。
+- `ingestion.loader / splitter / transform / embedding / upsert` 直接映射离线摄取流的五个核心阶段。
+- `query.processor / hybrid_search / reranker / response_builder` 直接映射 5.4.2 中的在线查询链路。
+- `storage.traces.file` 统一使用 `logs/traces.jsonl`，与 5.4.3 中 `TraceService` 的读取路径保持一致。
+- `dashboard.services` 对应管理操作流中的 `DataService`、`DocumentManager`、`TraceService`。
+- 所有 provider 与 backend 均通过配置切换，业务代码不直接写死具体实现。
 
 ## 6. 项目排期
 
