@@ -1,6 +1,6 @@
 # DEV_SPEC
 
-Version: `0.0.4`
+Version: `0.0.5`
 
 ## 目录
 
@@ -31,8 +31,9 @@ Version: `0.0.4`
   - [5.5 配置驱动设计示例](#55-配置驱动设计示例)
 - [6. 项目排期](#6-项目排期)
   - [6.1 阶段原则](#61-阶段原则)
-  - [6.2 分阶段任务清单](#62-分阶段任务清单)
-  - [6.3 进度跟踪表](#63-进度跟踪表)
+  - [6.2 总体进度表](#62-总体进度表)
+  - [6.3 分阶段任务清单与进度跟踪](#63-分阶段任务清单与进度跟踪)
+  - [6.4 执行建议](#64-执行建议)
 - [7. 开发规范补充约束](#7-开发规范补充约束)
   - [7.1 编码规范](#71-编码规范)
   - [7.2 异常处理规范](#72-异常处理规范)
@@ -854,7 +855,7 @@ evaluation:
 
 - 双链路全覆盖追踪：同时覆盖 Ingestion 与 Query 两条主链路，避免系统只能看到“问答结果”，却无法解释“文档如何进入索引”。
 - 透明可回溯：每次请求都必须具备唯一 `trace_id`，能回溯到阶段级耗时、输入输出摘要、调用组件、失败原因与关键指标。
-- 与业务解耦：追踪逻辑不能污染核心 Pipeline 代码，应通过统一 Trace Manager、装饰器、中间件或事件钩子插入，避免业务代码里散落日志拼接逻辑。
+- 与业务解耦：追踪逻辑不能污染核心 Pipeline 代码，应通过统一 `TraceManager`、装饰器、中间件或事件钩子插入，避免业务代码里散落日志拼接逻辑。
 - 结构化日志 + 本地 Dashboard：底层以 JSON Lines 记录结构化 Trace，前端以本地 Dashboard 做可视化展示，不依赖外部托管平台。
 - 自动根据可插拔组件渲染：由于系统中的 Loader、Splitter、Embedding、Reranker、VectorStore、Evaluator 都是可插拔的，Dashboard 不应写死页面字段，而应根据 Trace 中记录的组件名称、阶段类型与指标动态渲染。
 
@@ -1586,7 +1587,8 @@ RAGMS/                                                         # 项目根目录
 │   ├── run_dashboard.py                                       # 启动本地 Dashboard 的脚本
 │   ├── ingest_documents.py                                    # 批量执行文档摄取的脚本
 │   ├── query_cli.py                                           # 本地命令行查询入口
-│   └── run_evaluation.py                                      # 执行评估任务的脚本
+│   ├── run_evaluation.py                                      # 执行评估任务的脚本
+│   └── run_acceptance.py                                      # 执行全链路验收的脚本
 ├── data/                                                      # 本地数据目录
 │   ├── raw/                                                   # 原始输入数据
 │   │   ├── documents/                                         # 待摄取原始文档
@@ -1661,6 +1663,8 @@ RAGMS/                                                         # 项目根目录
 │       │   │   ├── __init__.py                                # ingestion_pipeline 子包初始化文件
 │       │   │   ├── pipeline.py                                # 摄取流水线主入口
 │       │   │   ├── file_integrity.py                          # File Integrity：SHA256 去重与增量判断
+│       │   │   ├── services/                                  # 摄取辅助服务
+│       │   │   │   └── metadata_service.py                    # 元数据增强服务
 │       │   │   ├── stages/                                    # 摄取阶段实现
 │       │   │   │   ├── load.py                                # Loader 解析阶段
 │       │   │   │   ├── split.py                               # 文本切分阶段
@@ -1795,21 +1799,28 @@ RAGMS/                                                         # 项目根目录
 │   │   │   ├── test_config.py                                 # 配置模块测试
 │   │   │   └── test_container.py                              # 容器装配测试
 │   │   ├── libs/                                              # 抽象层与工厂层单元测试
+│   │   │   ├── test_abstractions.py                           # 抽象基类契约测试
+│   │   │   ├── test_loader_factory.py                         # Loader 工厂测试
 │   │   │   ├── test_llm_factory.py                            # LLM 工厂测试
 │   │   │   ├── test_embedding_factory.py                      # Embedding 工厂测试
 │   │   │   ├── test_vector_store_factory.py                   # VectorStore 工厂测试
-│   │   │   └── test_splitter_factory.py                       # Splitter 工厂测试
+│   │   │   ├── test_evaluator_factory.py                      # Evaluator 工厂测试
+│   │   │   ├── test_ragas_evaluator.py                        # Ragas 评估器测试
+│   │   │   └── test_default_providers.py                      # 默认 provider 实现测试
 │   │   ├── core/                                              # 核心业务层单元测试
 │   │   │   ├── query_engine/                                  # 查询引擎单元测试
+│   │   │   │   ├── test_query_processor.py                    # Query Processor 测试
+│   │   │   │   ├── test_retrievers.py                         # Dense / Sparse 检索器测试
 │   │   │   │   ├── test_rrf.py                                # RRF 融合测试
-│   │   │   │   ├── test_rerank_pipeline.py                    # 重排流水线测试
-│   │   │   │   ├── test_citation_builder.py                   # 引用构建器测试
-│   │   │   │   └── test_context_builder.py                    # 上下文构建器测试
+│   │   │   │   └── test_reranker.py                           # Reranker 测试
 │   │   │   ├── ingestion_pipeline/                            # 摄取流水线单元测试
-│   │   │   │   ├── test_fingerprint_service.py                # 指纹服务测试
+│   │   │   │   ├── test_file_integrity.py                     # 文件完整性与增量判断测试
+│   │   │   │   ├── test_loader_stage.py                       # Loader 阶段测试
 │   │   │   │   ├── test_split_stage.py                        # 切分阶段测试
-│   │   │   │   └── test_metadata_service.py                   # 元数据服务测试
+│   │   │   │   └── test_transform_stage.py                    # Transform 阶段测试
 │   │   │   ├── evaluation/                                    # 评估模块单元测试
+│   │   │   │   ├── test_dataset_loader.py                     # 评估数据集加载测试
+│   │   │   │   ├── test_composite_evaluator.py                # 组合评估器测试
 │   │   │   │   └── test_metrics.py                            # 指标计算测试
 │   │   │   └── trace_collector/                               # Trace 模块单元测试
 │   │   │       ├── test_trace_manager.py                      # Trace 管理器测试
@@ -1821,17 +1832,29 @@ RAGMS/                                                         # 项目根目录
 │   │       ├── test_json_formatter.py                         # JSON 格式化器测试
 │   │       └── test_traces_reader.py                          # Trace 读取器测试
 │   ├── integration/                                           # 集成测试
+│   │   ├── test_bootstrap_smoke.py                            # 工程骨架冒烟测试
+│   │   ├── test_factory_wiring.py                             # 工厂装配集成测试
 │   │   ├── test_ingestion_pipeline.py                         # 摄取流水线集成测试
+│   │   ├── test_ingestion_pipeline_storage.py                 # 摄取写入存储集成测试
 │   │   ├── test_query_engine.py                               # 查询引擎集成测试
-│   │   ├── test_mcp_server_tools.py                           # MCP tools 集成测试
+│   │   ├── test_mcp_server_query_ingest.py                    # MCP Query / Ingest 集成测试
+│   │   ├── test_mcp_server_documents.py                       # MCP Collections / Documents 集成测试
+│   │   ├── test_mcp_server_trace_eval.py                      # MCP Trace / Evaluation 集成测试
 │   │   ├── test_trace_write_and_read.py                       # Trace 写入与读取集成测试
+│   │   ├── test_ingestion_trace_logging.py                    # Ingestion Trace 打点集成测试
+│   │   ├── test_query_trace_logging.py                        # Query Trace 打点集成测试
+│   │   ├── test_dashboard_shell.py                            # Dashboard 应用壳集成测试
+│   │   ├── test_dashboard_system_overview.py                  # Dashboard 系统总览页测试
 │   │   ├── test_dashboard_data_access.py                      # Dashboard 数据访问集成测试
+│   │   ├── test_dashboard_ingestion_management.py             # Dashboard Ingestion 管理页测试
+│   │   ├── test_dashboard_trace_viewer.py                     # Dashboard Trace 查看页测试
 │   │   └── test_evaluation_runner.py                          # 评估运行器集成测试
 │   ├── e2e/                                                   # 端到端测试
-│   │   ├── test_ingest_query_answer.py                        # 文档摄取后查询问答 E2E 测试
-│   │   ├── test_incremental_ingestion_skip.py                 # 增量摄取跳过逻辑 E2E 测试
 │   │   ├── test_mcp_stdio_flow.py                             # MCP STDIO 调用链路 E2E 测试
-│   │   └── test_evaluation_visible_in_dashboard.py            # 评估结果在 Dashboard 可见性测试
+│   │   ├── test_mcp_client_simulation.py                      # MCP Client 模拟 E2E 测试
+│   │   ├── test_dashboard_smoke.py                            # Dashboard 冒烟 E2E 测试
+│   │   ├── test_evaluation_visible_in_dashboard.py            # 评估结果在 Dashboard 可见性测试
+│   │   └── test_full_chain_acceptance.py                      # 全链路验收 E2E 测试
 │   ├── fixtures/                                              # 测试样例数据
 │   │   ├── documents/                                         # 文档样例
 │   │   ├── markdown/                                          # Markdown 样例
@@ -2277,315 +2300,531 @@ dashboard:
 
 ### 6.1 阶段原则
 
-- 总体按 A 到 I 九个阶段推进。
-- 每个阶段设计为约 1 小时一个可验收增量。
-- 每个阶段结束都必须满足“代码可运行 + 测试可验证 + 文档已同步”。
-
-### 6.2 分阶段任务清单
-
-#### 阶段 A：项目骨架与配置系统
-
-目的：建立可扩展项目骨架、配置模型与依赖装配基础。
-
-修改文件列表：
-
-- `pyproject.toml`
-- `settings.yaml`
-- `src/app/config.py`
-- `src/app/settings_models.py`
-- `src/app/container.py`
-- `tests/unit/test_config.py`
-
-实现的类/函数：
-
-- `load_settings()`
-- `AppSettings`
-- `build_container()`
-
-验收标准：
-
-- 能从 `settings.yaml` 成功加载配置
-- 支持环境变量覆盖 API Key
-- 容器可以根据配置创建基础组件实例
-
-测试方法：
-
-- `pytest tests/unit/test_config.py`
-
-#### 阶段 B：核心抽象与工厂体系
-
-目的：固定所有可插拔组件边界，避免后续 provider 实现耦合。
-
-修改文件列表：
-
-- `src/core/interfaces/*.py`
-- `src/core/factories/*.py`
-- `tests/unit/test_factories.py`
-
-实现的类/函数：
-
-- `BaseLLM`
-- `BaseEmbedding`
-- `BaseReranker`
-- `BaseVectorStore`
-- `LLMFactory.create()`
-- `EmbeddingFactory.create()`
-
-验收标准：
-
-- 所有核心组件都有统一抽象
-- 工厂可按 provider/type 正确实例化
-- 未知 provider 会抛出明确异常
-
-测试方法：
-
-- `pytest tests/unit/test_factories.py`
-
-#### 阶段 C：存储层与可观测基础
-
-目的：建立 SQLite、Chroma、JSONL Trace 三类基础设施。
-
-修改文件列表：
-
-- `src/storage/sqlite/*`
-- `src/providers/vector_store/chroma_store.py`
-- `src/core/trace/*`
-- `src/observability/logger.py`
-- `tests/unit/test_trace_context.py`
-
-实现的类/函数：
-
-- `SQLiteConnectionManager`
-- `DocumentRepository`
-- `TraceContext`
-- `TraceCollector`
-- `JsonlLogger`
-- `ChromaStore`
-
-验收标准：
-
-- SQLite 初始化成功
-- Chroma collection 可创建与查询
-- Trace 事件可写入 JSONL
-
-测试方法：
-
-- `pytest tests/unit/test_trace_context.py`
-- `pytest tests/integration/test_dashboard_data_access.py`
-
-#### 阶段 D：Ingestion Pipeline 最小闭环
-
-目的：实现 PDF 到向量入库的最小可运行链路。
-
-修改文件列表：
-
-- `src/providers/converter/markitdown_converter.py`
-- `src/ingestion/pipeline.py`
-- `src/ingestion/markdown_parser.py`
-- `src/ingestion/services/fingerprint_service.py`
-- `src/ingestion/services/chunking_service.py`
-- `src/ingestion/services/upsert_service.py`
-- `scripts/ingest.py`
-- `tests/integration/test_ingestion_pipeline.py`
-
-实现的类/函数：
-
-- `MarkItDownConverter.convert()`
-- `FingerprintService.compute_sha256()`
-- `ChunkingService.split_document()`
-- `IngestionPipeline.run()`
-
-验收标准：
-
-- 可以 ingest 一个 PDF 并完成 chunk 入库
-- 已处理文档再次 ingest 时可被 SHA256 跳过
-- trace 中可看到完整 ingestion stages
-
-测试方法：
-
-- `pytest tests/integration/test_ingestion_pipeline.py`
-- `pytest tests/e2e/test_incremental_ingestion.py`
-
-#### 阶段 E：检索、融合与重排
-
-目的：实现 Query Pipeline 主干能力。
-
-修改文件列表：
-
-- `src/retrieval/bm25_retriever.py`
-- `src/retrieval/dense_retriever.py`
-- `src/retrieval/fusion.py`
-- `src/retrieval/rerank_pipeline.py`
-- `src/retrieval/context_builder.py`
-- `src/retrieval/pipeline.py`
-- `tests/unit/test_fusion.py`
-- `tests/unit/test_rerank_pipeline.py`
-- `tests/integration/test_query_pipeline.py`
-
-实现的类/函数：
-
-- `BM25Retriever.retrieve()`
-- `DenseRetriever.retrieve()`
-- `reciprocal_rank_fusion()`
-- `RerankPipeline.run()`
-- `QueryPipeline.run()`
-
-验收标准：
-
-- 稀疏与稠密检索均可独立运行
-- RRF 融合结果顺序符合预期
-- rerank 可切换 `cross_encoder` 或 `llm_rerank`
-
-测试方法：
-
-- `pytest tests/unit/test_fusion.py`
-- `pytest tests/unit/test_rerank_pipeline.py`
-- `pytest tests/integration/test_query_pipeline.py`
-
-#### 阶段 F：回答生成与多模态增强
-
-目的：补齐最终回答生成、引用构建、图片描述写回链路。
-
-修改文件列表：
-
-- `src/providers/image_caption/vision_llm_captioner.py`
-- `src/ingestion/image_extractor.py`
-- `src/ingestion/chunk_enricher.py`
-- `src/retrieval/answer_generator.py`
-- `src/core/models/chunk.py`
-- `tests/integration/test_ingestion_pipeline.py`
-- `tests/e2e/test_ingest_and_query.py`
-
-实现的类/函数：
-
-- `VisionLLMCaptioner.describe()`
-- `ChunkEnricher.enrich()`
-- `AnswerGenerator.generate()`
-- `CitationGenerator.build()`
-
-验收标准：
-
-- 图片描述会被注入 chunk 文本
-- 回答结果包含引用来源
-- 无图片或图片失败不会阻塞整体流程
-
-测试方法：
-
-- `pytest tests/integration/test_ingestion_pipeline.py`
-- `pytest tests/e2e/test_ingest_and_query.py`
-
-#### 阶段 G：MCP Server 集成
-
-目的：通过 STDIO 暴露可调用工具。
-
-修改文件列表：
-
-- `src/mcp_server/server.py`
-- `src/mcp_server/protocol_handler.py`
-- `src/mcp_server/tool_registry.py`
-- `src/mcp_server/tools/query_knowledge_hub.py`
-- `src/mcp_server/tools/list_collections.py`
-- `src/mcp_server/tools/get_document_summary.py`
-- `scripts/run_mcp_server.py`
-- `tests/unit/test_protocol_handler.py`
-- `tests/integration/test_mcp_server.py`
-- `tests/e2e/test_mcp_stdio_runtime.py`
-
-实现的类/函数：
-
-- `create_mcp_server()`
-- `register_tools()`
-- `handle_query_knowledge_hub()`
-- `handle_list_collections()`
-- `handle_get_document_summary()`
-
-验收标准：
-
-- MCP Server 可通过 STDIO 正常启动
-- 三个首批 tools 可成功返回结构化结果
-- tool 层不直接耦合 provider 细节
-
-测试方法：
-
-- `pytest tests/unit/test_protocol_handler.py`
-- `pytest tests/integration/test_mcp_server.py`
-- `pytest tests/e2e/test_mcp_stdio_runtime.py`
+ - 总体按 A 到 I 九个阶段推进，每个阶段都必须形成独立可验收增量。
+ - 每个阶段再拆分为多个小阶段，编号形如 `A1`、`A2`、`B1`、`B2`。
+ - 每个小阶段必须具备明确的目标、修改文件、实现类/函数、验收标准和测试方法。
+ - 默认遵循 TDD 或近似 TDD：先定义接口与测试，再补实现，最后做文档同步。
+ - 每个阶段完成时必须满足“代码可运行 + 测试可验证 + 文档已同步”。
+
+### 6.2 总体进度表
+
+| 阶段 | 总任务数 | 已完成 | 进度 |
+|------|---------|--------|------|
+| 阶段 A | 5 | 0 | 0% |
+| 阶段 B | 6 | 0 | 0% |
+| 阶段 C | 6 | 0 | 0% |
+| 阶段 D | 5 | 0 | 0% |
+| 阶段 E | 5 | 0 | 0% |
+| 阶段 F | 5 | 0 | 0% |
+| 阶段 G | 6 | 0 | 0% |
+| 阶段 H | 5 | 0 | 0% |
+| 阶段 I | 5 | 0 | 0% |
+| **总计** | **48** | **0** | **0%** |
+
+**状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
+
+### 6.3 分阶段任务清单与进度跟踪
+
+#### 阶段 A：实现工程骨架与测试基座
+
+目标：建立可运行、可配置、可测试的工程骨架；后续所有模块都能以 TDD 方式落地。
+
+| 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
+|---------|---------|------|---------|------|
+| A1 | 初始化目录树与最小可运行入口 | [ ] |  |  |
+| A2 | 实现配置加载与配置模型 | [ ] |  |  |
+| A3 | 实现运行时容器与依赖装配入口 | [ ] |  |  |
+| A4 | 建立 pytest 测试基座与 fake/fixture 机制 | [ ] |  |  |
+| A5 | 建立本地启动脚本与最小冒烟测试 | [ ] |  |  |
+
+##### A1 初始化目录树与最小可运行入口
+
+- 目标：落地 `src/ragms`、`scripts`、`tests`、`data`、`logs` 的最小工程骨架。
+- 修改文件：`pyproject.toml`、`README.md`、`src/ragms/__init__.py`、`scripts/run_mcp_server.py`、`tests/conftest.py`
+- 实现类/函数：`main()`、`get_project_root()`
+- 验收标准：项目可安装；脚本可被 Python 正常执行；测试框架可被发现。
+- 测试方法：`pytest --collect-only`
+
+##### A2 实现配置加载与配置模型
+
+- 目标：让系统可以从 `settings.yaml` 与环境变量加载配置。
+- 修改文件：`settings.yaml`、`src/ragms/runtime/config.py`、`src/ragms/runtime/settings_models.py`、`tests/unit/runtime/test_config.py`
+- 实现类/函数：`load_settings()`、`AppSettings`
+- 验收标准：配置可成功解析；环境变量可覆盖密钥与路径；非法配置会快速报错。
+- 测试方法：`pytest tests/unit/runtime/test_config.py`
+
+##### A3 实现运行时容器与依赖装配入口
+
+- 目标：建立 `runtime/container.py`，为后续 Core/Libs/MCP 装配依赖。
+- 修改文件：`src/ragms/runtime/container.py`、`src/ragms/runtime/exceptions.py`、`tests/unit/runtime/test_container.py`
+- 实现类/函数：`build_container()`、`ServiceContainer`
+- 验收标准：容器可根据配置返回基础组件占位实例；依赖装配失败会抛出统一异常。
+- 测试方法：`pytest tests/unit/runtime/test_container.py`
+
+##### A4 建立 pytest 测试基座与 fake/fixture 机制
+
+- 目标：建立单元/集成/E2E 三层测试目录、公共 fixture 与 fake provider。
+- 修改文件：`pytest.ini`、`tests/conftest.py`、`tests/fakes/fake_llm.py`、`tests/fakes/fake_embedding.py`、`tests/fakes/fake_vector_store.py`
+- 实现类/函数：`FakeLLM`、`FakeEmbedding`、`FakeVectorStore`
+- 验收标准：测试可使用 fake provider 脱离真实外部依赖运行。
+- 测试方法：`pytest tests/unit -q`
+
+##### A5 建立本地启动脚本与最小冒烟测试
+
+- 目标：提供最小可运行的本地入口，验证工程骨架可执行。
+- 修改文件：`scripts/query_cli.py`、`scripts/run_dashboard.py`、`tests/integration/test_bootstrap_smoke.py`
+- 实现类/函数：`run_cli()`、`run_dashboard()`
+- 验收标准：CLI、Dashboard、MCP Server 启动脚本均可被调用；冒烟测试通过。
+- 测试方法：`pytest tests/integration/test_bootstrap_smoke.py`
+
+#### 阶段 B：实现核心抽象与工厂体系
+
+目标：实现 `libs` 可插拔层，确保 Core / Ingestion 不仅“可编译”，还可在真实环境跑通。
+
+| 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
+|---------|---------|------|---------|------|
+| B1 | 定义抽象基类集合 | [ ] |  |  |
+| B2 | 实现 Loader / Splitter / VectorStore 工厂 | [ ] |  |  |
+| B3 | 实现 LLM / Embedding / Reranker 工厂 | [ ] |  |  |
+| B4 | 落地默认 provider 实现 | [ ] |  |  |
+| B5 | 落地 Evaluator 抽象与工厂 | [ ] |  |  |
+| B6 | 完成工厂装配集成冒烟 | [ ] |  |  |
+
+##### B1 定义抽象基类集合
+
+- 目标：固定所有可插拔组件的接口边界。
+- 修改文件：`src/ragms/libs/abstractions/base_loader.py`、`base_splitter.py`、`base_transform.py`、`base_llm.py`、`base_embedding.py`、`base_reranker.py`、`base_vector_store.py`、`base_evaluator.py`、`tests/unit/libs/test_abstractions.py`
+- 实现类/函数：`BaseLoader`、`BaseSplitter`、`BaseTransform`、`BaseLLM`、`BaseEmbedding`、`BaseReranker`、`BaseVectorStore`、`BaseEvaluator`
+- 验收标准：所有抽象基类接口完整；方法签名稳定；测试可验证接口契约。
+- 测试方法：`pytest tests/unit/libs/test_abstractions.py`
+
+##### B2 实现 Loader / Splitter / VectorStore 工厂
+
+- 目标：实现文档加载、切分、向量存储三类工厂。
+- 修改文件：`src/ragms/libs/factories/loader_factory.py`、`src/ragms/libs/factories/splitter_factory.py`、`src/ragms/libs/factories/vector_store_factory.py`、`tests/unit/libs/test_loader_factory.py`
+- 实现类/函数：`LoaderFactory.create()`、`SplitterFactory.create()`、`VectorStoreFactory.create()`
+- 验收标准：可根据配置正确返回默认实现；未知 provider 抛出明确异常。
+- 测试方法：`pytest tests/unit/libs/test_loader_factory.py tests/unit/libs/test_vector_store_factory.py`
+
+##### B3 实现 LLM / Embedding / Reranker 工厂
+
+- 目标：实现模型侧三类工厂并支持配置切换。
+- 修改文件：`src/ragms/libs/factories/llm_factory.py`、`src/ragms/libs/factories/embedding_factory.py`、`src/ragms/libs/factories/reranker_factory.py`、`tests/unit/libs/test_llm_factory.py`
+- 实现类/函数：`LLMFactory.create()`、`EmbeddingFactory.create()`、`RerankerFactory.create()`
+- 验收标准：模型 provider 可按配置实例化；配置缺失与未知类型可被正确拦截。
+- 测试方法：`pytest tests/unit/libs/test_llm_factory.py tests/unit/libs/test_embedding_factory.py`
+
+##### B4 落地默认 provider 实现
+
+- 目标：提供默认可运行 provider，以支撑后续 Core 真实跑通。
+- 修改文件：`src/ragms/libs/providers/loaders/markitdown_loader.py`、`src/ragms/libs/providers/splitters/recursive_character_splitter.py`、`src/ragms/libs/providers/vector_stores/chroma_store.py`
+- 实现类/函数：`MarkItDownLoader.load()`、`RecursiveCharacterSplitter.split()`、`ChromaStore.add()/query()/delete()`
+- 验收标准：默认 Loader、Splitter、VectorStore 在本地样例上可运行。
+- 测试方法：`pytest tests/unit/libs/test_default_providers.py`
+
+##### B5 落地 Evaluator 抽象与工厂
+
+- 目标：建立评估器抽象、默认评估器实现和统一装配入口。
+- 修改文件：`src/ragms/libs/abstractions/base_evaluator.py`、`src/ragms/libs/factories/evaluator_factory.py`、`tests/unit/libs/test_evaluator_factory.py`
+- 实现类/函数：`BaseEvaluator.evaluate()`、`EvaluatorFactory.create()`
+- 验收标准：评估器可按配置切换；评估输出格式统一为指标字典。
+- 测试方法：`pytest tests/unit/libs/test_evaluator_factory.py`
+
+##### B6 完成工厂装配集成冒烟
+
+- 目标：验证 `runtime/container.py` 能通过真实工厂创建默认组件。
+- 修改文件：`tests/integration/test_factory_wiring.py`
+- 实现类/函数：`build_container()` 集成路径
+- 验收标准：默认配置下可成功装配 Loader、Splitter、Embedding、VectorStore、LLM、Evaluator。
+- 测试方法：`pytest tests/integration/test_factory_wiring.py`
+
+#### 阶段 C：Ingestion Pipeline
+
+目标：离线摄取链路跑通，能把样例文档写入向量库/BM25 索引并支持增量。
+
+| 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
+|---------|---------|------|---------|------|
+| C1 | 实现 File Integrity 与摄取历史存储 | [ ] |  |  |
+| C2 | 实现 Loader 与图片提取 | [ ] |  |  |
+| C3 | 实现 Splitter 与 Chunk 模型 | [ ] |  |  |
+| C4 | 实现 Transform 与多模态增强 | [ ] |  |  |
+| C5 | 实现 Embedding 与 Upsert | [ ] |  |  |
+| C6 | 打通 Ingestion Pipeline 与 CLI | [ ] |  |  |
+
+##### C1 实现 File Integrity 与摄取历史存储
+
+- 目标：支持 SHA256 增量判断和未变更跳过。
+- 修改文件：`src/ragms/core/ingestion_pipeline/file_integrity.py`、`src/ragms/storage/sqlite/repositories/ingestion_history.py`、`tests/unit/core/ingestion_pipeline/test_file_integrity.py`
+- 实现类/函数：`FileIntegrity.compute_sha256()`、`FileIntegrity.should_skip()`、`IngestionHistoryRepository`
+- 验收标准：相同文件内容重复摄取会被跳过；内容变化会触发重新处理。
+- 测试方法：`pytest tests/unit/core/ingestion_pipeline/test_file_integrity.py`
+
+##### C2 实现 Loader 与图片提取
+
+- 目标：将 PDF 转换为 Markdown，并收集图片与基础元数据。
+- 修改文件：`src/ragms/libs/providers/loaders/markitdown_loader.py`、`src/ragms/core/models/document.py`、`tests/unit/core/ingestion_pipeline/test_loader_stage.py`
+- 实现类/函数：`MarkItDownLoader.load()`、`Document.from_loader_output()`
+- 验收标准：样例 PDF 可转为 Markdown；图片引用和基础 metadata 可被提取。
+- 测试方法：`pytest tests/unit/core/ingestion_pipeline/test_loader_stage.py`
+
+##### C3 实现 Splitter 与 Chunk 模型
+
+- 目标：将文档稳定切分为带定位与图片引用的 chunk。
+- 修改文件：`src/ragms/core/models/chunk.py`、`src/ragms/core/ingestion_pipeline/stages/split.py`、`tests/unit/core/ingestion_pipeline/test_split_stage.py`
+- 实现类/函数：`SplitStage.run()`、`Chunk.build_id()`
+- 验收标准：chunk 数量、offset、`image_refs`、`chunk_id` 稳定性符合预期。
+- 测试方法：`pytest tests/unit/core/ingestion_pipeline/test_split_stage.py`
+
+##### C4 实现 Transform 与多模态增强
+
+- 目标：完成 LLM 重写、元数据注入、图片描述生成。
+- 修改文件：`src/ragms/core/ingestion_pipeline/stages/transform.py`、`src/ragms/core/ingestion_pipeline/services/metadata_service.py`、`tests/unit/core/ingestion_pipeline/test_transform_stage.py`
+- 实现类/函数：`TransformStage.run()`、`MetadataService.enrich()`、`inject_image_caption()`
+- 验收标准：Transform 后的 chunk 含增强文本与 metadata；无图文档可正常通过。
+- 测试方法：`pytest tests/unit/core/ingestion_pipeline/test_transform_stage.py`
+
+##### C5 实现 Embedding 与 Upsert
+
+- 目标：完成 Dense + Sparse 编码以及 Chroma/BM25/图片的统一写入。
+- 修改文件：`src/ragms/core/ingestion_pipeline/stages/embed.py`、`src/ragms/core/ingestion_pipeline/stages/upsert.py`、`src/ragms/storage/indexes/bm25_indexer.py`、`src/ragms/storage/images/image_storage.py`
+- 实现类/函数：`EmbedStage.run()`、`UpsertStage.run()`、`BM25Indexer.index_document()`
+- 验收标准：样例文档可写入 Chroma 与 BM25；图片可落盘；重复写入幂等。
+- 测试方法：`pytest tests/integration/test_ingestion_pipeline_storage.py`
+
+##### C6 打通 Ingestion Pipeline 与 CLI
+
+- 目标：完成离线摄取主编排器与命令行入口。
+- 修改文件：`src/ragms/core/ingestion_pipeline/pipeline.py`、`scripts/ingest_documents.py`、`tests/integration/test_ingestion_pipeline.py`
+- 实现类/函数：`IngestionPipeline.run()`、`ingest_documents_main()`
+- 验收标准：样例 PDF 能从 CLI 完整入库；增量跳过生效；返回结构完整。
+- 测试方法：`pytest tests/integration/test_ingestion_pipeline.py`
+
+#### 阶段 D：Retrieval（Dense + Sparse + RRF + 可选 Rerank）
+
+目标：在线查询链路跑通。
+
+| 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
+|---------|---------|------|---------|------|
+| D1 | 实现 Query Processor | [ ] |  |  |
+| D2 | 实现 Dense / Sparse Retrieval | [ ] |  |  |
+| D3 | 实现 Hybrid Search 与 RRF | [ ] |  |  |
+| D4 | 实现可选 Rerank | [ ] |  |  |
+| D5 | 打通 Query Engine 与查询 CLI | [ ] |  |  |
+
+##### D1 实现 Query Processor
+
+- 目标：完成用户查询的关键词提取、同义词扩展与 metadata 过滤解析。
+- 修改文件：`src/ragms/core/query_engine/query_processor.py`、`tests/unit/core/query_engine/test_query_processor.py`
+- 实现类/函数：`QueryProcessor.process()`
+- 验收标准：输入 Query 可被规范化；filters 可被正确解析。
+- 测试方法：`pytest tests/unit/core/query_engine/test_query_processor.py`
+
+##### D2 实现 Dense / Sparse Retrieval
+
+- 目标：完成向量检索与 BM25 检索两条召回路径。
+- 修改文件：`src/ragms/core/query_engine/retrievers/dense_retriever.py`、`src/ragms/core/query_engine/retrievers/sparse_retriever.py`、`tests/unit/core/query_engine/test_retrievers.py`
+- 实现类/函数：`DenseRetriever.retrieve()`、`SparseRetriever.retrieve()`
+- 验收标准：两类检索器均可独立工作并返回统一结果结构。
+- 测试方法：`pytest tests/unit/core/query_engine/test_retrievers.py`
+
+##### D3 实现 Hybrid Search 与 RRF
+
+- 目标：完成双路召回并行与 RRF 融合。
+- 修改文件：`src/ragms/core/query_engine/hybrid_search.py`、`tests/unit/core/query_engine/test_rrf.py`
+- 实现类/函数：`HybridSearch.search()`、`reciprocal_rank_fusion()`
+- 验收标准：Dense/Sparse 结果可融合；融合排序稳定。
+- 测试方法：`pytest tests/unit/core/query_engine/test_rrf.py`
+
+##### D4 实现可选 Rerank
+
+- 目标：实现 `cross_encoder / llm / none` 三种精排模式。
+- 修改文件：`src/ragms/core/query_engine/reranker.py`、`tests/unit/core/query_engine/test_reranker.py`
+- 实现类/函数：`Reranker.run()`
+- 验收标准：Rerank 可开关；不同 backend 切换后返回结构一致。
+- 测试方法：`pytest tests/unit/core/query_engine/test_reranker.py`
+
+##### D5 打通 Query Engine 与查询 CLI
+
+- 目标：形成 `Query Processor -> Hybrid Search -> Reranker -> Response Builder` 的完整在线链路。
+- 修改文件：`src/ragms/core/query_engine/engine.py`、`src/ragms/core/query_engine/response_builder.py`、`src/ragms/core/query_engine/citation_builder.py`、`src/ragms/core/query_engine/answer_generator.py`、`scripts/query_cli.py`
+- 实现类/函数：`QueryEngine.run()`、`ResponseBuilder.build()`
+- 验收标准：本地 CLI 可返回答案、引用和结构化结果。
+- 测试方法：`pytest tests/integration/test_query_engine.py`
+
+#### 阶段 E：MCP Server 层与 Tools 落地
+
+目标：按 MCP 标准暴露 tools。
+
+| 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
+|---------|---------|------|---------|------|
+| E1 | 实现 MCP Server 核心骨架 | [ ] |  |  |
+| E2 | 实现 Query / Ingest Tools | [ ] |  |  |
+| E3 | 实现 Collections / Documents Tools | [ ] |  |  |
+| E4 | 实现 Traces / Evaluation Tools | [ ] |  |  |
+| E5 | 完成 STDIO 运行与集成测试 | [ ] |  |  |
+
+##### E1 实现 MCP Server 核心骨架
+
+- 目标：建立 Server、协议处理器、schema 与 tool registry。
+- 修改文件：`src/ragms/mcp_server/server.py`、`src/ragms/mcp_server/protocol_handler.py`、`src/ragms/mcp_server/tool_registry.py`、`src/ragms/mcp_server/schemas.py`
+- 实现类/函数：`create_server()`、`register_tools()`、`ProtocolHandler.handle()`
+- 验收标准：MCP Server 可初始化并完成 tool 注册。
+- 测试方法：`pytest tests/unit/mcp_server/test_protocol_handler.py`
+
+##### E2 实现 Query / Ingest Tools
+
+- 目标：暴露查询与摄取两类核心工具。
+- 修改文件：`src/ragms/mcp_server/tools/query.py`、`src/ragms/mcp_server/tools/ingest.py`
+- 实现类/函数：`handle_query()`、`handle_ingest()`
+- 验收标准：Query / Ingest tools 可调用 Core 层并返回结构化结果。
+- 测试方法：`pytest tests/integration/test_mcp_server_query_ingest.py`
+
+##### E3 实现 Collections / Documents Tools
+
+- 目标：暴露集合和文档管理类工具。
+- 修改文件：`src/ragms/mcp_server/tools/collections.py`、`src/ragms/mcp_server/tools/documents.py`
+- 实现类/函数：`handle_list_collections()`、`handle_get_document()`
+- 验收标准：可返回集合列表、文档摘要、文档状态。
+- 测试方法：`pytest tests/integration/test_mcp_server_documents.py`
+
+##### E4 实现 Traces / Evaluation Tools
+
+- 目标：暴露 Trace 查询和评估结果查询/触发工具。
+- 修改文件：`src/ragms/mcp_server/tools/traces.py`、`src/ragms/mcp_server/tools/evaluation.py`
+- 实现类/函数：`handle_get_trace()`、`handle_run_evaluation()`
+- 验收标准：工具可按 `trace_id` 返回链路详情；评估可被远程触发。
+- 测试方法：`pytest tests/integration/test_mcp_server_trace_eval.py`
+
+##### E5 完成 STDIO 运行与集成测试
+
+- 目标：保证 MCP Server 可通过 STDIO 在真实进程边界下运行。
+- 修改文件：`scripts/run_mcp_server.py`、`tests/e2e/test_mcp_stdio_flow.py`
+- 实现类/函数：`run_mcp_server_main()`
+- 验收标准：MCP Client 模拟调用可通过 STDIO 正常收发消息。
+- 测试方法：`pytest tests/e2e/test_mcp_stdio_flow.py`
+
+#### 阶段 F：Trace 基础设施与打点
+
+目标：增强 `TraceManager`，实现结构化日志持久化，在 Ingestion + Query 双链路打点，添加 Pipeline 进度回调。
+
+| 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
+|---------|---------|------|---------|------|
+| F1 | 实现 Trace 模型与 TraceManager | [ ] |  |  |
+| F2 | 实现 JSONL 日志持久化 | [ ] |  |  |
+| F3 | 为 Ingestion 打点 | [ ] |  |  |
+| F4 | 为 Query 打点 | [ ] |  |  |
+| F5 | 增加进度回调与双链路集成测试 | [ ] |  |  |
+
+##### F1 实现 Trace 模型与 TraceManager
+
+- 目标：定义 QueryTrace / IngestionTrace / StageTrace 以及 TraceManager。
+- 修改文件：`src/ragms/core/trace_collector/trace_models.py`、`src/ragms/core/trace_collector/trace_manager.py`
+- 实现类/函数：`TraceManager.start_trace()`、`TraceManager.finish_trace()`
+- 验收标准：Trace 生命周期完整；阶段可注册与收敛。
+- 测试方法：`pytest tests/unit/core/trace_collector/test_trace_manager.py`
+
+##### F2 实现 JSONL 日志持久化
+
+- 目标：将 Trace 结构化写入 `logs/traces.jsonl`。
+- 修改文件：`src/ragms/storage/traces/jsonl_writer.py`、`src/ragms/observability/logging/json_formatter.py`
+- 实现类/函数：`JsonlTraceWriter.write()`、`JsonFormatter.format()`
+- 验收标准：单次请求可落为一条完整 JSONL 记录。
+- 测试方法：`pytest tests/unit/observability/test_json_formatter.py`
+
+##### F3 为 Ingestion 打点
+
+- 目标：在 File Integrity、Loader、Splitter、Transform、Embedding、Upsert 等阶段统一打点。
+- 修改文件：`src/ragms/core/ingestion_pipeline/pipeline.py`、`src/ragms/core/ingestion_pipeline/stages/load.py`、`src/ragms/core/ingestion_pipeline/stages/split.py`、`src/ragms/core/ingestion_pipeline/stages/transform.py`、`src/ragms/core/ingestion_pipeline/stages/embed.py`、`src/ragms/core/ingestion_pipeline/stages/upsert.py`
+- 实现类/函数：`record_ingestion_stage()`
+- 验收标准：Ingestion Trace 可完整显示各阶段耗时、状态和关键摘要。
+- 测试方法：`pytest tests/integration/test_ingestion_trace_logging.py`
+
+##### F4 为 Query 打点
+
+- 目标：在 Query Processor、Hybrid Search、Reranker、Response Builder 等阶段统一打点。
+- 修改文件：`src/ragms/core/query_engine/engine.py`、`src/ragms/core/query_engine/query_processor.py`、`src/ragms/core/query_engine/hybrid_search.py`、`src/ragms/core/query_engine/reranker.py`、`src/ragms/core/query_engine/response_builder.py`
+- 实现类/函数：`record_query_stage()`
+- 验收标准：Query Trace 可完整显示检索、融合、精排、生成细节。
+- 测试方法：`pytest tests/integration/test_query_trace_logging.py`
+
+##### F5 增加进度回调与双链路集成测试
+
+- 目标：为 Ingestion / Dashboard 增加进度回调，并完成双链路 Trace 集成验证。
+- 修改文件：`src/ragms/core/ingestion_pipeline/pipeline.py`、`src/ragms/observability/dashboard/services/trace_service.py`
+- 实现类/函数：`on_progress`、`TraceService.list_traces()`
+- 验收标准：摄取过程可实时回传进度；Dashboard 可按类型读取 Trace。
+- 测试方法：`pytest tests/integration/test_trace_write_and_read.py`
+
+#### 阶段 G：可视化管理平台 Dashboard
+
+目标：搭建 Streamlit 六页面管理平台。
+
+| 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
+|---------|---------|------|---------|------|
+| G1 | 建立 Dashboard 应用壳与通用组件 | [ ] |  |  |
+| G2 | 实现系统总览页 | [ ] |  |  |
+| G3 | 实现数据浏览器页 | [ ] |  |  |
+| G4 | 实现 Ingestion 管理页 | [ ] |  |  |
+| G5 | 实现 Trace 查看页 | [ ] |  |  |
+| G6 | 实现评估面板页与 Dashboard 冒烟测试 | [ ] |  |  |
+
+##### G1 建立 Dashboard 应用壳与通用组件
+
+- 目标：搭建 Streamlit 入口、通用布局、表格和图表组件。
+- 修改文件：`src/ragms/observability/dashboard/app.py`、`src/ragms/observability/dashboard/components/tables.py`、`src/ragms/observability/dashboard/components/charts.py`
+- 实现类/函数：`render_app()`、`render_table()`、`render_chart()`
+- 验收标准：Dashboard 可启动；基础布局和公共组件可复用。
+- 测试方法：`pytest tests/integration/test_dashboard_shell.py`
+
+##### G2 实现系统总览页
+
+- 目标：展示集合数量、文档总量、最近 Trace、核心指标趋势。
+- 修改文件：`src/ragms/observability/dashboard/pages/system_overview.py`
+- 实现类/函数：`render_system_overview()`
+- 验收标准：系统总览页可读取并展示聚合数据。
+- 测试方法：`pytest tests/integration/test_dashboard_system_overview.py`
+
+##### G3 实现数据浏览器页
+
+- 目标：展示文档列表、chunk 详情、图片预览与元数据过滤。
+- 修改文件：`src/ragms/observability/dashboard/pages/data_browser.py`、`src/ragms/observability/dashboard/services/data_service.py`
+- 实现类/函数：`render_data_browser()`、`DataService.list_documents()`
+- 验收标准：文档、chunk、图片均可浏览和回溯。
+- 测试方法：`pytest tests/integration/test_dashboard_data_access.py`
+
+##### G4 实现 Ingestion 管理页
+
+- 目标：支持触发摄取、查看进度、删除文档、重建文档。
+- 修改文件：`src/ragms/observability/dashboard/pages/ingestion_management.py`、`src/ragms/observability/dashboard/services/document_manager.py`
+- 实现类/函数：`render_ingestion_management()`、`DocumentManager.delete_document()`
+- 验收标准：页面可触发摄取与删除操作，并刷新状态。
+- 测试方法：`pytest tests/integration/test_dashboard_ingestion_management.py`
+
+##### G5 实现 Trace 查看页
+
+- 目标：支持查看 Query / Ingestion 两类 Trace。
+- 修改文件：`src/ragms/observability/dashboard/pages/trace_viewer.py`、`src/ragms/observability/dashboard/services/trace_service.py`
+- 实现类/函数：`render_trace_viewer()`、`TraceService.get_trace_detail()`
+- 验收标准：可按 `trace_type`、`trace_id` 检索并展示完整链路。
+- 测试方法：`pytest tests/integration/test_dashboard_trace_viewer.py`
+
+##### G6 实现评估面板页与 Dashboard 冒烟测试
+
+- 目标：在 Dashboard 中展示评估结果，并保证整站可启动。
+- 修改文件：`src/ragms/observability/dashboard/pages/evaluation_panel.py`、`tests/e2e/test_dashboard_smoke.py`
+- 实现类/函数：`render_evaluation_panel()`
+- 验收标准：评估面板可展示历史评估；Dashboard 冒烟测试通过。
+- 测试方法：`pytest tests/e2e/test_dashboard_smoke.py`
 
 #### 阶段 H：评估体系
 
-目的：建立 RAG 质量评估与结果存档能力。
+目标：实现 `RagasEvaluator + CompositeEvaluator + EvalRunner`，启用评估面板页面，建立 golden test set 回归基线。
 
-修改文件列表：
+| 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
+|---------|---------|------|---------|------|
+| H1 | 建立 golden test set 与数据集加载 | [ ] |  |  |
+| H2 | 实现 RagasEvaluator | [ ] |  |  |
+| H3 | 实现 CompositeEvaluator | [ ] |  |  |
+| H4 | 实现 EvalRunner 与报告落盘 | [ ] |  |  |
+| H5 | 接入评估面板并建立回归基线 | [ ] |  |  |
 
-- `src/evaluation/runner.py`
-- `src/evaluation/dataset_loader.py`
-- `src/evaluation/metrics.py`
-- `src/evaluation/ragas_evaluator.py`
-- `src/evaluation/report_writer.py`
-- `scripts/evaluate.py`
-- `tests/integration/test_evaluation_runner.py`
+##### H1 建立 golden test set 与数据集加载
 
-实现的类/函数：
+- 目标：建立标准化评估数据集和回归样本。
+- 修改文件：`data/evaluation/datasets/*`、`src/ragms/core/evaluation/dataset_loader.py`
+- 实现类/函数：`DatasetLoader.load()`
+- 验收标准：golden test set 可被读取并映射为统一输入结构。
+- 测试方法：`pytest tests/unit/core/evaluation/test_dataset_loader.py`
 
-- `EvaluationRunner.run()`
-- `compute_hit_rate()`
-- `compute_mrr()`
-- `RagasEvaluator.evaluate()`
+##### H2 实现 RagasEvaluator
 
-验收标准：
+- 目标：对接 ragas 并输出标准化指标字典。
+- 修改文件：`src/ragms/libs/providers/evaluators/ragas_evaluator.py`、`tests/unit/libs/test_ragas_evaluator.py`
+- 实现类/函数：`RagasEvaluator.evaluate()`
+- 验收标准：可对样例数据返回 `context_precision`、`answer_relevancy` 等指标。
+- 测试方法：`pytest tests/unit/libs/test_ragas_evaluator.py`
 
-- 支持自定义指标跑通
-- 支持接入 Ragas
-- 结果可写入 SQLite 和文件报告
+##### H3 实现 CompositeEvaluator
 
-测试方法：
+- 目标：支持多个 evaluator 组合运行。
+- 修改文件：`src/ragms/core/evaluation/runner.py`、`src/ragms/libs/factories/evaluator_factory.py`
+- 实现类/函数：`CompositeEvaluator.evaluate()`
+- 验收标准：多评估器可并行输出综合指标结果。
+- 测试方法：`pytest tests/unit/core/evaluation/test_composite_evaluator.py`
 
-- `pytest tests/integration/test_evaluation_runner.py`
+##### H4 实现 EvalRunner 与报告落盘
 
-#### 阶段 I：Dashboard 与交付收口
+- 目标：完成批量评估执行与 SQLite/文件报告落盘。
+- 修改文件：`src/ragms/core/evaluation/runner.py`、`src/ragms/core/evaluation/report_service.py`、`src/ragms/storage/sqlite/repositories/evaluations.py`
+- 实现类/函数：`EvalRunner.run()`、`ReportService.write_report()`
+- 验收标准：评估结果可被持久化并可供 Dashboard 读取。
+- 测试方法：`pytest tests/integration/test_evaluation_runner.py`
 
-目的：完成本地 Dashboard、文档与交付质量收口。
+##### H5 接入评估面板并建立回归基线
 
-修改文件列表：
+- 目标：让 Dashboard 展示评估结果，并建立可对比的 golden baseline。
+- 修改文件：`src/ragms/observability/dashboard/pages/evaluation_panel.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`
+- 实现类/函数：`load_latest_evaluation()`
+- 验收标准：评估面板可读取最新结果；baseline 可用于回归对比。
+- 测试方法：`pytest tests/e2e/test_evaluation_visible_in_dashboard.py`
 
-- `src/dashboard/app.py`
-- `src/dashboard/data_access.py`
-- `src/dashboard/components.py`
-- `src/dashboard/pages/*.py`
-- `README.md`
-- `DEV_SPEC.md`
-- `tests/integration/test_dashboard_data_access.py`
+#### 阶段 I：端到端验收与文档收口
 
-实现的类/函数：
+目标：补齐 E2E 测试（MCP Client 模拟 + Dashboard 冒烟），完善 README，全链路验收。
 
-- `load_overview_metrics()`
-- `load_trace_timeline()`
-- `load_collection_summary()`
-- `render_evaluation_panel()`
+| 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
+|---------|---------|------|---------|------|
+| I1 | 实现 MCP Client 模拟 E2E | [ ] |  |  |
+| I2 | 实现 Dashboard 冒烟 E2E | [ ] |  |  |
+| I3 | 完成全链路验收脚本 | [ ] |  |  |
+| I4 | 完善 README 与开发文档 | [ ] |  |  |
+| I5 | 完成最终验收与版本收口 | [ ] |  |  |
 
-验收标准：
+##### I1 实现 MCP Client 模拟 E2E
 
-- Dashboard 五个页面可正常显示
-- 数据来自本地 SQLite / JSONL / Chroma 派生统计
-- README 能指导本地运行 ingest、query、MCP、dashboard、evaluate
+- 目标：模拟真实 MCP Client 进行端到端问答与工具调用。
+- 修改文件：`tests/e2e/test_mcp_client_simulation.py`
+- 实现类/函数：`simulate_mcp_client_roundtrip()`
+- 验收标准：可通过模拟客户端完成 query / ingest / trace / documents 基本调用。
+- 测试方法：`pytest tests/e2e/test_mcp_client_simulation.py`
 
-测试方法：
+##### I2 实现 Dashboard 冒烟 E2E
 
-- `pytest tests/integration/test_dashboard_data_access.py`
+- 目标：验证 Dashboard 可启动并完成关键页面加载。
+- 修改文件：`tests/e2e/test_dashboard_smoke.py`
+- 实现类/函数：`dashboard_smoke_check()`
+- 验收标准：系统总览、数据浏览、Trace 查看、评估面板页面可正常打开。
+- 测试方法：`pytest tests/e2e/test_dashboard_smoke.py`
 
-### 6.3 进度跟踪表
+##### I3 完成全链路验收脚本
 
-| 阶段 | 目标 | 预计时长 | 状态 | 完成定义 |
-|---|---|---:|---|---|
-| A | 项目骨架与配置系统 | 1h | TODO | 配置可加载、容器可初始化 |
-| B | 核心抽象与工厂体系 | 1h | TODO | 接口稳定、工厂可实例化 |
-| C | 存储层与可观测基础 | 1h | TODO | SQLite/Chroma/Trace 可运行 |
-| D | Ingestion Pipeline 最小闭环 | 1h | TODO | PDF 可入库且支持增量跳过 |
-| E | 检索、融合与重排 | 1h | TODO | Query Pipeline 可返回候选结果 |
-| F | 回答生成与多模态增强 | 1h | TODO | 回答带引用，图片描述入块 |
-| G | MCP Server 集成 | 1h | TODO | STDIO tools 可调用 |
-| H | 评估体系 | 1h | TODO | 指标可运行并落库 |
-| I | Dashboard 与交付收口 | 1h | TODO | 面板可视化与文档齐备 |
+- 目标：形成“摄取 -> 查询 -> MCP -> Trace -> Dashboard -> Evaluation”的完整验收路径。
+- 修改文件：`scripts/run_acceptance.py`、`tests/e2e/test_full_chain_acceptance.py`
+- 实现类/函数：`run_full_acceptance()`
+- 验收标准：一条命令可执行完整验收链路并输出结果摘要。
+- 测试方法：`pytest tests/e2e/test_full_chain_acceptance.py`
+
+##### I4 完善 README 与开发文档
+
+- 目标：补齐安装、配置、运行、测试、调试、评估说明。
+- 修改文件：`README.md`、`DEV_SPEC.md`、`docs/architecture/*`
+- 实现类/函数：文档补充为主，无新增核心函数
+- 验收标准：新成员可按 README 完成本地启动、摄取、查询、评估与 Dashboard 使用。
+- 测试方法：人工走查 + README 流程冒烟验证
+
+##### I5 完成最终验收与版本收口
+
+- 目标：完成全项目最终验收并冻结交付版本。
+- 修改文件：`README.md`、`DEV_SPEC.md`、`pyproject.toml`
+- 实现类/函数：`print_release_summary()`（可选）
+- 验收标准：所有核心测试通过；关键用户路径验收完成；文档与实现一致。
+- 测试方法：`pytest tests/unit tests/integration tests/e2e`
+
+### 6.4 执行建议
+
+- 建议严格按 A → I 顺序推进，避免在工程骨架和抽象层未稳定前提前进入 Dashboard 或评估实现。
+- 阶段 C、D、F、G、H 是核心交付阶段，任何一个阶段开始前都应确保前一阶段的测试基线稳定。
+- 若需要压缩周期，优先并行的是阶段 G 与阶段 H 的页面开发，但前提是阶段 F 的 Trace 基础设施已经稳定。
 
 ## 7. 开发规范补充约束
 
