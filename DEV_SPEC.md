@@ -1,6 +1,6 @@
 # DEV_SPEC
 
-Version: `0.0.2`
+Version: `0.0.3`
 
 ## 目录
 
@@ -713,125 +713,291 @@ MCP 分层建议：
 
 ### 3.3 可插拔架构设计
 
-#### 3.3.1 组件抽象
+#### 3.3.1 抽象组件
+
+项目采用“抽象基类 + 工厂模式 + 配置驱动”的统一设计，使各核心组件都能在不改动上层业务代码的前提下完成替换、扩展与回退。抽象层的目标不是单纯做一层包装，而是收敛输入输出契约、统一错误语义，并为 Trace、测试和 A/B 实验提供稳定边界。
 
 以下组件必须定义抽象基类或协议接口：
 
+- `BaseLoader`
 - `BaseLLM`
 - `BaseEmbedding`
 - `BaseReranker`
 - `BaseVectorStore`
 - `BaseSplitter`
 - `BaseEvaluator`
-- `BaseSparseRetriever`
-- `BaseDocumentConverter`
-- `BaseImageCaptioner`
 
 统一要求：
 
-- 构造函数只接收结构化配置对象，不直接依赖全局变量
-- 对外暴露稳定方法签名
-- 错误抛出统一使用项目内异常体系
-- 可通过工厂注册表创建实例
+- 构造函数只接收结构化配置对象，不直接依赖全局变量。
+- 对外暴露稳定的方法签名，避免上层编排逻辑感知底层实现差异。
+- 错误抛出统一使用项目内异常体系，便于日志归一化和调用方处理。
+- 通过统一配置文件（如 `settings.yaml`）指定各组件的具体后端，做到“改配置不改代码”。
+- 使用工厂函数根据配置动态实例化对应实现类，实现统一装配入口。
+- 抽象层需要为可观测性预留挂点，支持记录 provider、耗时、重试、降级和失败原因。
 
-#### 3.3.2 工厂模式
+通用结构示意：
 
-建议工厂：
+```text
+业务代码
+  │
+  ▼
+<Component>Factory.get_xxx()  ← 读取 settings.yaml
+  │
+  ├─→ ImplementationA()
+  ├─→ ImplementationB()
+  └─→ ImplementationC()
+      │
+      ▼
+   统一实现抽象接口
+```
 
-- `LLMFactory`
-- `EmbeddingFactory`
-- `RerankerFactory`
-- `VectorStoreFactory`
-- `SplitterFactory`
-- `EvaluatorFactory`
-- `DocumentConverterFactory`
-- `ImageCaptionFactory`
+#### 3.3.2 LLM 与 Embedding 抽象
 
-工厂职责：
+LLM 与 Embedding 需要独立抽象，避免“生成模型选择”和“检索模型选择”耦合在一起。无论底层 provider 是 OpenAI、Qwen、DeepSeek、BGE、Jina、Voyage 还是其他实现，上层调用代码都应保持一致。
 
-- 根据 `provider` 或 `type` 字段装配实例
-- 对缺失配置、未知 provider 给出明确错误
-- 将默认参数与用户配置合并
+关键抽象如下：
 
-#### 3.3.3 配置管理
+- `LLMClient`：暴露 `chat(messages) -> response` 方法，屏蔽不同 Provider 的认证方式、请求结构、参数命名和响应格式差异。
+- `EmbeddingClient`：暴露 `embed(texts) -> vectors` 方法，统一处理批量请求、并发控制、重试逻辑与向量维度归一化。
 
-统一使用 `settings.yaml` 作为主配置文件，采用分层配置模型：
+实现层采用 `BaseLLM` / `BaseEmbedding` 抽象基类，配合工厂模式统一装配：
 
-- `app`
-- `storage`
-- `models`
-- `rag`
-- `ingestion`
-- `retrieval`
-- `observability`
-- `evaluation`
-- `mcp`
-- `dashboard`
+- `llm_factory.py`：根据 `settings.yaml` 中的 `provider`、`model`、超参数和认证配置，返回对应的 `BaseLLM` 实现。
+- `embedding_factory.py`：根据配置返回 Dense、Sparse 或双路 Embedding 实现，保证上层调用入口一致。
 
-推荐做法：
+该设计的直接收益是：
 
-- 用 Pydantic Settings 或显式配置模型进行加载和校验
-- 支持环境变量覆盖敏感项，例如 API Key
-- 配置解析后生成只读对象，避免运行期随意修改
+- Query Pipeline、Rerank、Transform 等上层模块不需要感知具体模型供应商。
+- 模型切换、限流策略调整、认证方式变化只影响实现层，不影响业务编排。
+- 便于在同一套业务代码下做不同模型的效果、成本与延迟对比。
 
-首批 provider 范围：
+#### 3.3.3 检索策略抽象
 
-- LLM：
-  - OpenAI
-  - Qwen
-  - DeepSeek
-- VectorStore：
-  - ChromaDB
-- Splitter：
-  - LangChain `RecursiveCharacterTextSplitter`
-- Reranker：
-  - Cross-Encoder
-  - LLM Rerank
-- Evaluator：
-  - Ragas
-  - Custom Metrics
+检索链路中的向量数据库、Embedding、分块器与召回策略都应通过统一接口进行建模。项目为 `BaseVectorStore`、`BaseEmbedding`、`BaseSplitter` 等核心组件定义抽象基类，不同实现只需遵循同一接口即可无缝替换。
+
+每个抽象层都配套工厂函数，例如 `embedding_factory.py`、`splitter_factory.py`、`vector_store_factory.py`，根据 `settings.yaml` 中的配置字段自动实例化对应实现，实现“改配置不改代码”的切换体验。
+
+逐项设计如下：
+
+- splitter：默认采用 LangChain 的 `RecursiveCharacterTextSplitter` 进行切分。如需切换为 `SentenceSplitter`、`SemanticSplitter` 或自定义切分器，只需实现 `BaseSplitter` 接口并在配置中指定即可。
+- 向量数据库：定义统一的 `BaseVectorStore` 抽象接口，暴露 `.add()`、`.query()`、`.delete()` 等方法。所有向量数据库后端只需实现该接口即可插拔替换，并由 `VectorStoreFactory` 根据配置自动选择具体实现。项目首选 ChromaDB 作为默认向量数据库。
+- 向量编码策略：定义 `BaseEmbedding` 抽象接口，支持不同 Embedding 模型的可插拔替换。项目当前采用双路编码（Dense + Sparse）策略。存储时，Dense Vector 和 Sparse Vector 与 Chunk 原文、Metadata 一起原子化写入向量数据库，确保检索时可同时利用两种向量。
+- 召回策略：默认采用混合召回 + 精排（Hybrid + Rerank）策略，同时支持关闭精排，或切换为纯稠密召回、纯稀疏召回等模式。所有策略均通过配置切换，而不是通过条件分支散落在业务代码中。
+
+该层的目标是让系统不仅“后端可替换”，连检索方法论本身也能被统一编排、统一评估和统一观测。
+
+#### 3.3.4 评估框架抽象
+
+评估层定义统一的 `BaseEvaluator` 接口，暴露 `evaluate(query, retrieved_chunks, generated_answer, ground_truth) -> metrics` 方法。所有评估框架都实现该接口，并输出标准化的指标字典，避免上层处理逻辑绑定某一评估工具的原始返回格式。
+
+可选评估后端包括：
+
+- `ragas`
+- `DeepEval`
+- 自定义指标实现
+
+评估模块采用组合模式设计，可同时挂载多个 Evaluator，对同一批样本并行执行评估并生成综合报告。典型配置示例如下：
+
+```yaml
+evaluation:
+  backends: [ragas, custom_metrics]
+```
+
+这种抽象方式可以保证：
+
+- 新增评估框架时只需实现 `BaseEvaluator`，无需修改评估主流程。
+- 不同评估结果能够沉淀为统一结构，便于横向比较与长期追踪。
+- 检索、生成、重排策略的实验结果可以在同一套报告体系中汇总分析。
+
+#### 3.3.5 配置管理与切换流程
+
+- **配置文件结构示例** (`config/settings.yaml`)：
+	```yaml
+	llm:
+	  provider: azure  # azure | openai | qwen | deepseek
+	  model: gpt-5  # gpt-5 | gpt-4 | qwen
+	  # provider-specific configs...
+	
+	embedding:
+	  provider: openai
+	  model: text-embedding-3-small
+	
+	vector_store:
+	  backend: chroma  # chroma | qdrant | pinecone
+	
+	retrieval:
+	  sparse_backend: bm25  # bm25 | elasticsearch
+	  fusion_algorithm: rrf  # rrf | weighted_sum
+	  rerank_backend: cross_encoder  # none | cross_encoder | llm
+	
+	evaluation:
+	  backends: [ragas, custom_metrics]
+	
+	dashboard:
+	  enabled: true
+	  port: 8501
+	  traces_dir: ./logs
+	```
+
+- **切换流程**：
+
+	1. 修改 `settings.yaml` 中对应组件的 `backend` / `provider` 字段。
+	2. 确保新后端的依赖已安装、凭据已配置。
+	3. 重启服务，工厂函数自动加载新实现，无需修改业务代码。
 
 ### 3.4 可观测性与 Dashboard 设计
 
-#### 3.4.1 Trace 设计
+#### 3.4.1 设计理念
 
-系统必须覆盖两条 Trace 主链路：
+可观测性层的目标不是“额外补几条日志”，而是为系统建立可回放、可分析、可比较的运行事实记录。设计上遵循以下原则：
 
-- Ingestion Trace
-- Query Trace
+- 双链路全覆盖追踪：同时覆盖 Ingestion 与 Query 两条主链路，避免系统只能看到“问答结果”，却无法解释“文档如何进入索引”。
+- 透明可回溯：每次请求都必须具备唯一 `trace_id`，能回溯到阶段级耗时、输入输出摘要、调用组件、失败原因与关键指标。
+- 与业务解耦：追踪逻辑不能污染核心 Pipeline 代码，应通过统一 Trace Manager、装饰器、中间件或事件钩子插入，避免业务代码里散落日志拼接逻辑。
+- 结构化日志 + 本地 Dashboard：底层以 JSON Lines 记录结构化 Trace，前端以本地 Dashboard 做可视化展示，不依赖外部托管平台。
+- 自动根据可插拔组件渲染：由于系统中的 Loader、Splitter、Embedding、Reranker、VectorStore、Evaluator 都是可插拔的，Dashboard 不应写死页面字段，而应根据 Trace 中记录的组件名称、阶段类型与指标动态渲染。
 
-每次链路执行都必须生成唯一 `trace_id`，节点级事件至少包括：
+该设计确保系统不仅能“知道失败了”，还能回答以下问题：
 
-- `trace_id`
-- `span_id`
-- `parent_span_id`
-- `pipeline_type`
-- `stage`
-- `component`
-- `provider`
-- `start_time`
-- `end_time`
-- `duration_ms`
-- `status`
-- `input_summary`
-- `output_summary`
-- `metrics`
-- `error`
+- 失败发生在哪个阶段、哪个 provider、哪次配置版本。
+- 同一查询在不同检索策略下耗时和效果有何差异。
+- 某次文档摄取为何被跳过、重建或部分失败。
 
-日志格式：
+#### 3.4.2 追踪数据结构
 
-- JSON Lines
-- 一行一个事件
-- 文件按日期或模块滚动
+系统定义两类 Trace 记录，分别覆盖查询与摄取两条链路：
 
-存储建议：
+- `QueryTrace`：记录一次查询从 Query Rewrite、Hybrid Retrieval、Rerank、Prompt Assemble 到 Answer Generation 的完整过程。
+- `IngestionTrace`：记录一次摄取从文件发现、Loader、Splitter、Transform、Embedding、Upsert 到状态提交的完整过程。
 
-- `logs/traces/*.jsonl`
-- `logs/app/*.jsonl`
+两类 Trace 都必须共享统一的顶层结构，以便 Dashboard 统一读取和过滤。Trace 的持久化粒度为“单次请求一条完整记录”，阶段详情以内嵌 `stages` 列表方式保存，而不是将每个阶段拆成独立日志行。
 
-#### 3.4.2 指标设计
+**A. Query Trace（查询追踪）**
 
-至少记录以下指标：
+每次查询请求生成唯一的 `trace_id`，记录从 Query 输入到 Response 输出的全过程：
+
+**基础信息**：
+- `trace_id`：请求唯一标识
+- `trace_type`：`"query"`
+- `start_time` / `end_time` / `duration_ms`：请求开始时间、结束时间与总耗时
+- `user_query`：用户原始查询
+- `collection`：检索的知识库集合
+- `status`：本次请求状态
+
+**各阶段详情 (Stages)**：
+
+| 阶段 | 记录内容 |
+|-----|---------|
+| **Query Processing** | 原始 Query、改写后 Query（若有）、提取的关键词、method、耗时 |
+| **Dense Retrieval** | 返回的 Top-N 候选及相似度分数、provider、耗时 |
+| **Sparse Retrieval** | 返回的 Top-N 候选及 BM25 分数、method、耗时 |
+| **Fusion** | 融合后的统一排名、algorithm、耗时 |
+| **Rerank** | 重排后的最终排名及分数、backend、是否触发 Fallback、耗时 |
+| **Generation（可选）** | Prompt 摘要、LLM provider、模型名称、首 token 耗时、答案摘要、总耗时 |
+
+**汇总指标**：
+- `duration_ms`：端到端总耗时
+- `top_k_results`：最终返回的 Top-K 文档 ID
+- `error`：异常信息（若有）
+
+**评估指标 (Evaluation Metrics)**：
+- `context_relevance`：召回文档与 Query 的相关性分数
+- `answer_faithfulness`：生成答案与召回文档的一致性分数（若有生成环节）
+
+**B. Ingestion Trace（摄取追踪）**
+
+每次文档摄取生成唯一的 `trace_id`，记录从文件加载到存储完成的全过程：
+
+**基础信息**：
+- `trace_id`：摄取唯一标识
+- `trace_type`：`"ingestion"`
+- `start_time` / `end_time` / `duration_ms`：摄取开始时间、结束时间与总耗时
+- `source_path`：源文件路径
+- `collection`：目标集合名称
+- `status`：本次摄取状态
+
+**各阶段详情 (Stages)**：
+
+| 阶段 | 记录内容 |
+|-----|---------|
+| **Load** | 文件大小、解析器（method: markitdown）、提取的图片数、耗时 |
+| **Split** | splitter 类型（method）、产出 chunk 数、平均 chunk 长度、耗时 |
+| **Transform** | 各 transform 名称与处理详情（refined/enriched/captioned 数量）、LLM provider、耗时 |
+| **Embed** | embedding provider、batch 数、向量维度、dense + sparse 编码耗时 |
+| **Upsert** | 存储后端（method: chroma）、upsert 数量、BM25 索引更新、图片存储、耗时 |
+
+**汇总指标**：
+- `duration_ms`：端到端总耗时
+- `total_chunks`：最终存储的 chunk 数量
+- `total_images`：处理的图片数量
+- `skipped`：跳过的文件/chunk 数（已存在、未变更等）
+- `error`：异常信息（若有）
+
+#### 3.4.3 技术方案：结构化日志 + 本地 Web Dashboard
+
+可观测性方案采用“结构化日志存储 + 本地可视化 UI”两层设计。
+
+实现架构：
+
+```text
+RAG Pipeline / MCP Tools
+        │
+        ▼
+Trace Collector (装饰器 / 回调 / Hook)
+        │
+        ▼
+JSON Lines Trace Logs
+logs/traces/query-YYYY-MM-DD.jsonl
+logs/traces/ingestion-YYYY-MM-DD.jsonl
+        │
+        ▼
+本地 Web Dashboard (Streamlit)
+        │
+        ▼
+按 trace_id 查看单次完整链路与性能指标
+```
+
+底层日志方案：
+
+- 基于 Python `logging` + JSON Formatter，将每次请求的 Trace 数据以 JSON Lines 格式追加写入本地文件。
+- 每行对应一条完整请求记录，而不是零散文本片段；阶段级细节统一收敛在该记录的 `stages` 字段中。
+- 文件建议按日期或链路类型滚动，例如：
+  - `logs/traces/query-YYYY-MM-DD.jsonl`
+  - `logs/traces/ingestion-YYYY-MM-DD.jsonl`
+  - `logs/app/app-YYYY-MM-DD.jsonl`
+- 结构化日志优先服务于机器读取与本地分析，因此禁止把关键信息只写在自由文本 message 中。
+
+本地 Dashboard 方案：
+
+- 基于 Streamlit 构建轻量级 Web UI，本地运行，不依赖 LangSmith 等外部 SaaS 平台。
+- Dashboard 直接读取 JSONL、SQLite 与 Chroma 派生统计数据，提供交互式查询、筛选、聚合与可视化。
+- 核心能力是按 `trace_id` 检索并展示单次请求的完整追踪链路，帮助开发者做性能定位、错误排查和策略对比；若某次 Query 未进入生成阶段，则页面应按实际 `stages` 动态渲染，而不是强制展示空白模块。
+
+该技术路线的优势在于：
+
+- 部署轻量，适合本地优先项目。
+- 数据格式简单透明，便于调试、回放和离线分析。
+- 与可插拔架构天然兼容，新增阶段或组件时只需扩展 Trace 字段与渲染规则。
+
+#### 3.4.4 追踪机制实现
+
+追踪机制建议通过统一的 Trace 基础设施实现，而不是让每个模块手工拼装日志。推荐实现方式如下：
+
+- 在 Pipeline 入口生成 `trace_id`，并创建当前请求的 Trace 上下文。
+- 通过 `TraceManager` 或等价组件统一管理阶段开始、阶段结束、异常捕获、指标聚合和最终落盘。
+- 在 Loader、Splitter、Transform、Embedding、VectorStore、Retriever、Reranker、LLM、Evaluator 等抽象层边界自动打点，而不是在每个具体实现里重复写日志逻辑。
+- 对每个阶段记录标准化的输入摘要、输出摘要、耗时、provider、重试次数和异常信息。
+- 在请求结束时聚合阶段级信息，生成一条完整 Trace 记录并写入 JSONL。
+
+推荐的实现职责拆分：
+
+- `trace_manager.py`：Trace 上下文创建、阶段注册、结束收敛、落盘。
+- `trace_models.py`：`QueryTrace`、`IngestionTrace`、`StageTrace` 等数据结构定义。
+- `trace_logger.py`：`logging` 与 JSON Formatter 封装。
+- `trace_utils.py`：输入输出摘要裁剪、异常序列化、时间统计、敏感字段脱敏。
+
+指标记录建议至少覆盖：
 
 - Ingestion：
   - 文档数
@@ -840,7 +1006,7 @@ MCP 分层建议：
   - 图片数
   - 跳过文档数
   - 各阶段耗时
-- Retrieval：
+- Retrieval / Query：
   - 稀疏召回数量
   - 稠密召回数量
   - 融合后数量
@@ -848,76 +1014,286 @@ MCP 分层建议：
   - 首 token 耗时
   - 总响应耗时
 - Evaluation：
-  - hit_rate
-  - MRR
-  - context_precision
-  - answer_relevancy
+  - `hit_rate`
+  - `MRR`
+  - `context_precision`
+  - `answer_relevancy`
 
-#### 3.4.3 Streamlit Dashboard
+为避免追踪机制反向污染业务层，需要额外满足以下约束：
 
-Dashboard 本地运行，不依赖 LangSmith 等外部平台。
+- 业务组件只暴露必要的摘要信息，不负责决定日志格式。
+- Trace 写入失败不能拖垮主链路，最多降级为告警或 fallback 到简化日志。
+- 所有敏感字段必须在落盘前脱敏，例如密钥、认证头、完整原始提示词中的敏感内容。
 
-页面规划：
+#### 3.4.5 Dashboard 功能设计
 
-- 系统总览
-  - 数据规模
-  - 最新运行状态
-  - 最近 Trace
-  - 模型配置摘要
-- 数据浏览
-  - collection 列表
-  - 文档详情
-  - chunk 浏览
-  - 元数据过滤
-- Ingestion 管理
-  - 任务列表
-  - 增量跳过统计
-  - 失败重试入口
-  - 文档状态筛选
-- 追踪查看
-  - trace 查询
-  - span 时间线
-  - 参数与结果摘要
-  - 错误栈查看
-- 评估面板
-  - 数据集选择
-  - 指标趋势
-  - provider 对比
-  - case-by-case 失败分析
+Dashboard 分为六大页面：
+
+- `系统总览`
+- `数据浏览器`
+- `Ingestion管理`
+- `Ingestion追踪`
+- `Query追踪`
+- `评估面板`
+
+各页面职责建议如下：
+
+- `系统总览`：展示集合数量、文档总量、chunk 总量、最近 Trace、组件配置摘要、最近异常与核心性能指标趋势。
+- `数据浏览器`：浏览 collection、document、chunk 与 metadata，支持过滤、检索、定位和回溯到源文档。
+- `Ingestion管理`：查看摄取任务、增量跳过情况、失败原因、重建入口、文档状态和版本信息。
+- `Ingestion追踪`：按 `trace_id` 查看单次摄取链路的阶段时间线、阶段输入输出摘要、组件信息和失败节点。
+- `Query追踪`：查看查询重写、Dense/Sparse 召回、融合、Rerank、生成等阶段细节，并支持不同 `trace_id` 间对比。
+- `评估面板`：展示数据集维度的评估结果、指标趋势、provider 对比和 case-by-case 失败分析。
+
+技术架构图：
+
+```text
+RAG Pipeline / MCP Tools
+          │
+          ▼
+     TraceManager
+          │
+          ├─→ JSONL Trace Logs
+          ├─→ SQLite Metadata
+          └─→ Chroma Derived Stats
+                   │
+                   ▼
+          Streamlit Dashboard
+          ├─→ 系统总览
+          ├─→ 数据浏览器
+          ├─→ Ingestion管理
+          ├─→ Ingestion追踪
+          ├─→ Query追踪
+          └─→ 评估面板
+```
+
+Dashboard 与 Trace 的数据关系如下：
+
+- Dashboard 的 `Ingestion追踪` 页面直接消费 `IngestionTrace`，按 `trace_id` 渲染每个阶段的状态、耗时与错误信息。
+- Dashboard 的 `Query追踪` 页面直接消费 `QueryTrace`，展示召回数量、融合结果、rerank 耗时、答案摘要等核心字段。
+- `系统总览` 与 `评估面板` 对 Trace 数据做聚合统计，形成趋势图、分布图和策略对比图。
+- `数据浏览器` 与 `Ingestion管理` 会将 Trace 与 SQLite / Chroma 中的文档实体关联起来，实现“从文档跳到追踪”与“从追踪回到文档”的双向回溯。
 
 Dashboard 设计要求：
 
-- 页面逻辑与底层服务分层，禁止在页面中直接写复杂业务逻辑
-- 仅读 SQLite / JSONL / Chroma 派生统计，不直接改写核心数据
-- 所有图表必须可在无外部联网环境下运行
+- 页面逻辑与底层服务分层，禁止在页面中直接写复杂业务逻辑。
+- 优先读取 JSONL、SQLite 和 Chroma 的派生统计，不直接改写核心数据。
+- 页面渲染应基于 Trace 中的组件元信息动态展示，避免写死 provider 或阶段名称。
+- 所有图表和检索能力必须支持无外部联网环境下运行。
+
+#### 3.4.6 配置示例
+
+```yaml
+observability:
+  enabled: true
+  
+  # 日志配置
+  logging:
+    log_file: logs/traces.jsonl  # JSON Lines 格式日志文件
+    log_level: INFO  # DEBUG | INFO | WARNING
+  
+  # 追踪粒度控制
+  detail_level: standard  # minimal | standard | verbose
+
+# Dashboard 管理平台配置
+dashboard:
+  enabled: true
+  port: 8501                     # Streamlit 服务端口
+  traces_dir: ./logs             # Trace 日志文件目录
+  auto_refresh: true             # 是否自动刷新（轮询新 trace）
+  refresh_interval: 5            # 自动刷新间隔（秒）
+```
 
 ### 3.5 多模态图片处理设计
+**目标：** 设计一套完整的图片处理方案，使 RAG 系统能够理解、索引并检索文档中的图片内容，实现"用自然语言搜索图片"的能力，同时保持架构的简洁性与可扩展性。
 
-本项目采用 Image-to-Text 路线，不做 CLIP 多模态向量检索。
+#### 3.5.1 设计理念与策略选型
 
-处理流程：
+多模态 RAG 的核心挑战在于：**如何让纯文本的检索系统"看懂"图片**。业界主要有两种技术路线：
 
-1. 在 PDF 转 Markdown 或解析阶段提取图片引用
-2. 获取图片二进制或中间文件路径
-3. 调用 Vision LLM 生成结构化描述
-4. 将描述与图片位置关系注入 chunk
-5. 将图片描述作为普通文本参与稀疏检索与稠密检索
+| 策略 | 核心思路 | 优势 | 劣势 |
+|-----|---------|------|------|
+| **Image-to-Text (图转文)** | 利用 Vision LLM 将图片转化为文本描述，复用纯文本 RAG 链路 | 架构统一、实现简单、成本可控 | 描述质量依赖 LLM 能力，可能丢失视觉细节 |
+| **Multi-Embedding (多模态向量)** | 使用 CLIP 等模型将图文统一映射到同一向量空间 | 保留原始视觉特征，支持图搜图 | 需引入额外向量库，架构复杂度高 |
 
-设计要求：
+**本项目选型：Image-to-Text（图转文）策略**
 
-- 图片描述需尽量包含：
-  - 图类型
-  - 图中主要对象
-  - 关键数值或标签
-  - 与周边正文的关系
-- 图片描述应写入：
-  - `image_caption`
-  - `image_index`
-  - `related_section`
-- 若图片描述失败：
-  - 不阻塞整个文档摄取
-  - 记录 warning trace
-  - 对应 chunk 保留降级标记
+选型理由：
+- **架构统一**：无需引入 CLIP 等多模态 Embedding 模型，无需维护独立的图像向量库，完全复用现有的文本 RAG 链路（Ingestion → Hybrid Search → Rerank）。
+- **语义对齐**：通过 LLM 将图片的视觉信息转化为自然语言描述，天然与用户的文本查询在同一语义空间，检索效果可预期。
+- **成本可控**：仅在数据摄取阶段一次性调用 Vision LLM，检索阶段无额外成本。
+- **渐进增强**：未来如需支持"图搜图"等高级能力，可在此基础上叠加 CLIP Embedding，无需重构核心链路。
+
+#### 3.5.2 图片处理全流程设计
+
+图片处理贯穿 Ingestion Pipeline 的多个阶段，整体流程如下：
+
+```
+原始文档 (PDF/PPT/Markdown)
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Loader 阶段：图片提取与引用收集                           │
+│  - 解析文档，识别并提取嵌入的图片资源                        │
+│  - 为每张图片生成唯一标识 (image_id)                       │
+│  - 在文档文本中插入图片占位符/引用标记                       │
+│  - 输出：Document (text + metadata.images[])             │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Splitter 阶段：保持图文关联                               │
+│  - 切分时保留图片引用标记在对应 Chunk 中                     │
+│  - 确保图片与其上下文段落保持关联                            │
+│  - 输出：Chunks (各自携带关联的 image_refs)                │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Transform 阶段：图片理解与描述生成                         │
+│  - 调用 Vision LLM 对每张图片生成结构化描述                  │
+│  - 将描述文本注入到关联 Chunk 的正文或 Metadata 中           │
+│  - 输出：Enriched Chunks (含图片语义信息)                  │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  Storage 阶段：双轨存储                                    │
+│  - 向量库：存储增强后的 Chunk (含图片描述) 用于检索           │
+│  - 文件系统/Blob：存储原始图片文件用于返回展示                │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### 3.5.3 各阶段技术要点
+
+**1. Loader 阶段：图片提取与引用收集**
+
+- **提取策略**：
+  - 解析文档时识别嵌入的图片资源（PDF 中的 XObject、PPT 中的媒体文件、Markdown 中的 `![]()` 引用）。
+  - 为每张图片生成全局唯一的 `image_id`（建议格式：`{doc_hash}_{page}_{seq}`）。
+  - 将图片二进制数据提取并暂存，记录其在原文档中的位置信息。
+
+- **引用标记**：
+  - 在转换后的 Markdown 文本中，于图片原始位置插入占位符（如 `[IMAGE: {image_id}]`）。
+  - 在 Document 的 Metadata 中维护 `images` 列表，记录每张图片的 `image_id`、原始路径、页码、尺寸等基础信息。
+
+- **存储原始图片**：
+  - 将提取的图片保存至本地文件系统的约定目录（如 `data/images/{collection}/{image_id}.png`）。
+  - 仅保存需要的图片格式（推荐统一转换为 PNG/JPEG），控制存储体积。
+
+**2. Splitter 阶段：保持图文关联**
+
+- **关联保持原则**：
+  - 图片引用标记应与其说明性文字（Caption、前后段落）尽量保持在同一 Chunk 中。
+  - 若图片出现在章节开头或结尾，切分时应将其归入语义上最相关的 Chunk。
+
+- **Chunk Metadata 扩展**：
+  - 每个 Chunk 的 Metadata 中增加 `image_refs: List[image_id]` 字段，记录该 Chunk 关联的图片列表。
+  - 此字段用于后续 Transform 阶段定位需要处理的图片，以及检索命中后定位需要返回的图片。
+
+**3. Transform 阶段：图片理解与描述生成**
+
+这是多模态处理的核心环节，负责将视觉信息转化为可检索的文本语义。
+
+**双模型选型策略（推荐）**：
+
+本项目采用**国内 + 国外双模型**方案，通过配置切换，兼顾不同部署环境和文档类型：
+
+| 部署环境 | 主选模型 | 备选模型 | 说明 |
+|---------|---------|---------|------|
+| **国际化 / Azure 环境** | GPT-4o (Azure) | Qwen-VL-Max | 英文文档优先用 GPT-4o，中文文档可切换 Qwen-VL |
+| **国内部署 / 纯中文场景** | Qwen-VL-Max | GPT-4o | 中文图表理解用 Qwen-VL，特殊需求可切换 GPT-4o |
+| **成本敏感 / 大批量** | Qwen-VL-Plus | Gemini Pro Vision | 牺牲部分质量换取速度和成本 |
+
+- **描述生成策略**：
+  - **结构化 Prompt**：设计专用的图片理解 Prompt，引导 LLM 输出结构化描述，而非自由发挥。
+  - **上下文感知**：将图片的前后文本段落一并传入 Vision LLM，帮助其理解图片在文档中的语境与作用。
+  - **分类型处理**：针对不同类型的图片采用差异化的理解策略：
+
+| 图片类型 | 理解重点 | Prompt 引导方向 |
+|---------|---------|----------------|
+| **流程图/架构图** | 节点、连接关系、流程逻辑 | "描述这张图的结构和流程步骤" |
+| **数据图表** | 数据趋势、关键数值、对比关系 | "提取图表中的关键数据和结论" |
+| **截图/UI** | 界面元素、操作指引、状态信息 | "描述截图中的界面内容和关键信息" |
+| **照片/插图** | 主体对象、场景、视觉特征 | "描述图片中的主要内容" |
+
+- **描述注入方式**：
+  - **推荐：注入正文**：将生成的描述直接替换或追加到 Chunk 正文中的图片占位符位置，格式如 `[图片描述: {caption}]`。这样描述会被 Embedding 覆盖，可被直接检索。
+  - **备选：注入 Metadata**：将描述存入 `chunk.metadata.image_captions` 字段。需确保检索时该字段也被索引。
+
+- **幂等与增量处理**：
+  - 为每张图片的描述计算内容哈希，存入 `processing_cache` 表。
+  - 重复处理时，若图片内容未变且 Prompt 版本一致，直接复用缓存的描述，避免重复调用 Vision LLM。
+
+**4. Storage 阶段：双轨存储**
+
+- **向量库存储（用于检索）**：
+  - 存储增强后的 Chunk，其正文已包含图片描述，Metadata 包含 `image_refs` 列表。
+  - 检索时通过文本相似度即可命中包含相关图片描述的 Chunk。
+
+- **原始图片存储（用于返回）**：
+  - 图片文件存储于本地文件系统，路径记录在独立的 `images` 索引表中。
+  - 索引表字段：`image_id`, `file_path`, `source_doc`, `page`, `width`, `height`, `mime_type`。
+  - 检索命中后，根据 Chunk 的 `image_refs` 查询索引表，获取图片文件路径用于返回。
+
+#### 3.5.4 检索与返回流程
+
+当用户查询命中包含图片的 Chunk 时，系统需要将图片与文本一并返回：
+
+```
+用户查询: "系统架构是什么样的？"
+    │
+    ▼
+Hybrid Search 命中 Chunk（正文含 "[图片描述: 系统采用三层架构...]"）
+    │
+    ▼
+从 Chunk.metadata.image_refs 获取关联的 image_id 列表
+    │
+    ▼
+查询 images 索引表，获取图片文件路径
+    │
+    ▼
+读取图片文件，编码为 Base64
+    │
+    ▼
+构造 MCP 响应，包含 TextContent + ImageContent
+```
+
+**MCP 响应格式**：
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "根据文档，系统架构如下：...\n\n[1] 来源: architecture.pdf, 第5页"
+    },
+    {
+      "type": "image",
+      "data": "<base64-encoded-image>",
+      "mimeType": "image/png"
+    }
+  ]
+}
+```
+
+#### 3.5.5 质量保障与边界处理
+
+- **描述质量检测**：
+  - 对生成的描述进行基础质量检查（长度、是否包含关键信息）。
+  - 若描述过短或 LLM 返回"无法识别"，标记该图片为 `low_quality`，可选择人工复核或跳过索引。
+
+- **大尺寸/特殊图片处理**：
+  - 超大图片在传入 Vision LLM 前进行压缩（保持宽高比，限制最大边长）。
+  - 对于纯装饰性图片（如分隔线、背景图），可通过尺寸或位置规则过滤，不进入描述生成流程。
+
+- **批量处理优化**：
+  - 图片描述生成支持批量异步调用，提高吞吐量。
+  - 单个文档处理失败时，记录失败的图片 ID，不影响其他图片的处理进度。
+
+- **降级策略**：
+  - 当 Vision LLM 不可用时，系统回退到"仅保留图片占位符"模式，图片不参与检索但不阻塞 Ingestion 流程。
+  - 在 Chunk 中标记 `has_unprocessed_images: true`，后续可增量补充描述。
 
 ## 4. 测试方案
 
