@@ -1,6 +1,6 @@
 # DEV_SPEC
 
-Version: `0.0.6`
+Version: `0.0.7`
 
 ## 目录
 
@@ -1660,21 +1660,6 @@ RAGMS/                                                         # 项目根目录
 │       │   │   ├── response_builder.py                        # Response Builder：引用、图片编码、MCP 格式化
 │       │   │   ├── citation_builder.py                        # 引用构建器
 │       │   │   └── answer_generator.py                        # 回答生成器
-│       │   ├── ingestion_pipeline/                            # 离线数据摄取流水线
-│       │   │   ├── __init__.py                                # ingestion_pipeline 子包初始化文件
-│       │   │   ├── pipeline.py                                # 摄取流水线主入口
-│       │   │   ├── file_integrity.py                          # File Integrity：SHA256 去重与增量判断
-│       │   │   ├── services/                                  # 摄取辅助服务
-│       │   │   │   └── metadata_service.py                    # 元数据增强服务
-│       │   │   ├── stages/                                    # 摄取阶段实现
-│       │   │   │   ├── load.py                                # Loader 解析阶段
-│       │   │   │   ├── split.py                               # 文本切分阶段
-│       │   │   │   ├── transform.py                           # LLM 重写、元数据注入、图片描述阶段
-│       │   │   │   ├── embed.py                               # Dense Embedding 与 BM25 入索引准备阶段
-│       │   │   │   └── upsert.py                              # Chroma/BM25/图片存储写入阶段
-│       │   │   ├── document_registry.py                       # 文档注册表与状态映射
-│       │   │   └── managers/
-│       │   │       └── document_manager.py                    # 文档删除、重建、状态管理
 │       │   ├── management/                                    # 管理操作服务层
 │       │   │   ├── __init__.py                                # management 子包初始化文件
 │       │   │   ├── data_service.py                            # Dashboard 数据浏览服务
@@ -1694,6 +1679,34 @@ RAGMS/                                                         # 项目根目录
 │       │       ├── trace_models.py                            # Trace 数据结构定义
 │       │       ├── stage_recorder.py                          # 阶段记录器
 │       │       └── trace_utils.py                             # Trace 辅助工具
+│       ├── ingestion_pipeline/                                # 离线数据摄取流水线
+│       │   ├── __init__.py                                    # ingestion_pipeline 子包初始化文件
+│       │   ├── pipeline.py                                    # 摄取流水线主入口，支持阶段回调
+│       │   ├── callbacks.py                                   # Pipeline 回调协议与钩子实现
+│       │   ├── file_integrity.py                              # File Integrity：SHA256 去重与增量判断
+│       │   ├── lifecycle/                                     # 文档生命周期与状态管理
+│       │   │   ├── document_registry.py                       # 文档注册表与状态映射
+│       │   │   └── document_manager.py                        # 文档删除、重建、状态管理
+│       │   ├── chunking/                                      # Chunking 模块：文档切分
+│       │   │   └── split.py                                   # 文本切分阶段
+│       │   ├── transform/                                     # Transform 模块：增强处理
+│       │   │   ├── __init__.py                                # transform 子模块初始化文件
+│       │   │   ├── pipeline.py                                # Transform 主编排
+│       │   │   ├── smart_chunk_builder.py                     # Chunk 智能重组 / 去噪
+│       │   │   ├── metadata_injection.py                      # 语义元数据注入（Title/Summary/Tags）
+│       │   │   ├── image_captioning.py                        # 图片描述生成（Vision LLM）
+│       │   │   └── services/
+│       │   │       └── metadata_service.py                    # 元数据增强辅助服务
+│       │   ├── embedding/                                     # Embedding 模块
+│       │   │   ├── pipeline.py                                # Embedding 主编排
+│       │   │   ├── dense_encoder.py                           # 稠密向量编码
+│       │   │   ├── sparse_encoder.py                          # 稀疏向量编码（BM25）
+│       │   │   └── optimization.py                            # 批处理、缓存、并发等处理优化
+│       │   └── storage/                                       # Storage 模块
+│       │       ├── pipeline.py                                # Storage 主编排
+│       │       ├── vector_upsert.py                           # 向量库 Upsert
+│       │       ├── bm25_indexing.py                           # BM25 索引构建
+│       │       └── image_storage.py                           # 图片文件存储
 │       ├── libs/                                              # 可插拔抽象层
 │       │   ├── __init__.py                                    # libs 子包初始化文件
 │       │   ├── abstractions/                                  # 抽象基类定义
@@ -1816,22 +1829,20 @@ RAGMS/                                                         # 项目根目录
 │   │   │   │   ├── test_markitdown_loader.py                  # MarkItDown Loader 测试
 │   │   │   │   ├── test_recursive_character_splitter.py       # Recursive Splitter 测试
 │   │   │   │   ├── test_chroma_store.py                       # Chroma Store 测试
-│   │   │   │   ├── test_default_llm.py                        # 默认 LLM provider 测试
-│   │   │   │   ├── test_default_vision_llm.py                 # 默认 Vision LLM provider 测试
-│   │   │   │   ├── test_default_embedding.py                  # 默认 Embedding provider 测试
-│   │   │   │   └── test_default_reranker.py                   # 默认 Reranker provider 测试
-│   │   │   └── test_default_providers.py                      # 默认 provider 冒烟测试
+│   │   │   │   ├── test_openai_llm.py                         # OpenAI LLM provider 测试
+│   │   │   │   ├── test_qwen_llm.py                           # Qwen LLM provider 测试
+│   │   │   │   ├── test_gpt4o_vision_llm.py                   # GPT-4o Vision provider 测试
+│   │   │   │   ├── test_qwen_vl_llm.py                        # Qwen-VL provider 测试
+│   │   │   │   ├── test_openai_embedding.py                   # OpenAI Embedding provider 测试
+│   │   │   │   ├── test_cross_encoder_reranker.py             # Cross-Encoder Reranker 测试
+│   │   │   │   └── test_llm_reranker.py                       # LLM Reranker 测试
+│   │   │   └── test_provider_wiring_smoke.py                  # provider 装配冒烟测试
 │   │   ├── core/                                              # 核心业务层单元测试
 │   │   │   ├── query_engine/                                  # 查询引擎单元测试
 │   │   │   │   ├── test_query_processor.py                    # Query Processor 测试
 │   │   │   │   ├── test_retrievers.py                         # Dense / Sparse 检索器测试
 │   │   │   │   ├── test_rrf.py                                # RRF 融合测试
 │   │   │   │   └── test_reranker.py                           # Reranker 测试
-│   │   │   ├── ingestion_pipeline/                            # 摄取流水线单元测试
-│   │   │   │   ├── test_file_integrity.py                     # 文件完整性与增量判断测试
-│   │   │   │   ├── test_loader_stage.py                       # Loader 阶段测试
-│   │   │   │   ├── test_split_stage.py                        # 切分阶段测试
-│   │   │   │   └── test_transform_stage.py                    # Transform 阶段测试
 │   │   │   ├── evaluation/                                    # 评估模块单元测试
 │   │   │   │   ├── test_dataset_loader.py                     # 评估数据集加载测试
 │   │   │   │   ├── test_composite_evaluator.py                # 组合评估器测试
@@ -1839,6 +1850,29 @@ RAGMS/                                                         # 项目根目录
 │   │   │   └── trace_collector/                               # Trace 模块单元测试
 │   │   │       ├── test_trace_manager.py                      # Trace 管理器测试
 │   │   │       └── test_trace_utils.py                        # Trace 工具测试
+│   │   ├── ingestion_pipeline/                                # 摄取流水线单元测试
+│   │   │   ├── test_file_integrity.py                         # 文件完整性与增量判断测试
+│   │   │   ├── test_pipeline_callbacks.py                     # Pipeline 回调测试
+│   │   │   ├── lifecycle/                                     # 文档生命周期测试
+│   │   │   │   ├── test_document_registry.py                  # 文档注册表测试
+│   │   │   │   └── test_document_manager.py                   # 文档生命周期管理测试
+│   │   │   ├── chunking/                                      # Chunking 模块测试
+│   │   │   │   └── test_split.py                              # 文本切分测试
+│   │   │   ├── transform/                                     # Transform 模块测试
+│   │   │   │   ├── test_pipeline.py                           # Transform 主编排测试
+│   │   │   │   ├── test_smart_chunk_builder.py                # Chunk 智能重组/去噪测试
+│   │   │   │   ├── test_metadata_injection.py                 # 语义元数据注入测试
+│   │   │   │   └── test_image_captioning.py                   # 图片描述生成测试
+│   │   │   ├── embedding/                                     # Embedding 模块测试
+│   │   │   │   ├── test_pipeline.py                           # Embedding 主编排测试
+│   │   │   │   ├── test_dense_encoder.py                      # 稠密向量编码测试
+│   │   │   │   ├── test_sparse_encoder.py                     # 稀疏向量编码测试
+│   │   │   │   └── test_optimization.py                       # 处理优化测试
+│   │   │   └── storage/                                       # Storage 模块测试
+│   │   │       ├── test_pipeline.py                           # Storage 主编排测试
+│   │   │       ├── test_vector_upsert.py                      # 向量库 Upsert 测试
+│   │   │       ├── test_bm25_indexing.py                      # BM25 索引构建测试
+│   │   │       └── test_image_storage.py                      # 图片文件存储测试
 │   │   ├── mcp_server/                                        # MCP Server 单元测试
 │   │   │   ├── test_protocol_handler.py                       # 协议处理器测试
 │   │   │   └── test_tools_schema.py                           # tool schema 测试
@@ -1927,14 +1961,6 @@ RAGMS/                                                         # 项目根目录
 | `core/query_engine/response_builder.py` | 生成 MCP 最终响应，附带引用和图片内容。 | 引用拼装、图片 Base64 编码、MCP 格式封装。 |
 | `core/query_engine/citation_builder.py` | 从检索结果构建引用信息。 | chunk 溯源、路径/页码映射、引用规范化。 |
 | `core/query_engine/answer_generator.py` | 调用 LLM 生成最终回答。 | 统一 LLM 接口、答案生成、上下文使用控制。 |
-| `core/ingestion_pipeline/pipeline.py` | 离线摄取主编排器，串联 File Integrity、Loader、Splitter、Transform、Embedding、Upsert。 | Ingestion Flow 编排、跳过策略、幂等处理。 |
-| `core/ingestion_pipeline/file_integrity.py` | 负责 SHA256 指纹计算与“未变更则跳过”逻辑。 | 文件完整性校验、增量摄取、跳过策略。 |
-| `core/ingestion_pipeline/stages/load.py` | 将 PDF 转为 Markdown，并提取图片与元数据。 | MarkItDown、图片提取、文档标准化。 |
-| `core/ingestion_pipeline/stages/split.py` | 按语义边界进行切分并保留图片引用。 | Recursive Splitter、`image_refs` 保留。 |
-| `core/ingestion_pipeline/stages/transform.py` | 对 Chunk 做 LLM 重写、元数据注入和图片描述增强。 | Enrichment、多模态文本融合、Vision LLM Captioning、Metadata Injection。 |
-| `core/ingestion_pipeline/stages/embed.py` | 执行 Dense Embedding 与 BM25 建索引前的数据准备。 | Dense 向量生成、批处理、向量归一化、BM25 输入整理。 |
-| `core/ingestion_pipeline/stages/upsert.py` | 将向量、Chunk、图片和索引结果写入存储。 | Chroma Upsert、BM25 Index、图片存储、幂等写入。 |
-| `core/ingestion_pipeline/document_registry.py` | 维护文档登记、状态变更与来源映射。 | 文档注册、状态流转、来源追踪。 |
 | `core/management/data_service.py` | 为 Dashboard 提供文档列表、Chunk 详情、图片预览等数据读取能力。 | Chroma 元数据查询、图片列表聚合、只读数据服务。 |
 | `core/management/document_manager.py` | 负责文档删除、重建和管理操作。 | Chroma 删除、BM25 索引移除、图片删除、完整性记录清理。 |
 | `core/management/trace_service.py` | 提供 Trace 日志读取、分类和详情查询能力。 | 读取 `logs/traces.jsonl`、按 `trace_type` 分类、返回链路详情。 |
@@ -1947,16 +1973,40 @@ RAGMS/                                                         # 项目根目录
 | `core/trace_collector/stage_recorder.py` | 记录阶段耗时、输入输出摘要和指标。 | 阶段级打点、指标聚合、失败节点定位。 |
 | `core/trace_collector/trace_utils.py` | 提供摘要裁剪、异常序列化、敏感字段脱敏等能力。 | Trace 安全落盘、日志可读性优化。 |
 
-#### 5.3.4 `libs` 层
+#### 5.3.4 `ingestion_pipeline` 层
 
 | 模块 | 职责 | 关键技术点 |
 |---|---|---|
-| `libs/abstractions/` | 定义 Loader、Splitter、Transform、LLM、Vision LLM、Embedding、Reranker、VectorStore、Evaluator 抽象基类。 | 抽象接口统一、实现可插拔、上层调用解耦。 |
+| `ingestion_pipeline/pipeline.py` | 离线摄取主编排器，统一编排 Loader、Chunking、Transform、Embedding、Storage 五段流程。 | Ingestion Flow 编排、阶段调度、回调机制、错误恢复。 |
+| `ingestion_pipeline/callbacks.py` | 定义 Pipeline 回调协议与默认钩子。 | before/after stage 回调、进度通知、Trace/日志联动。 |
+| `ingestion_pipeline/file_integrity.py` | 负责 SHA256 指纹计算与“未变更则跳过”逻辑。 | 文件完整性校验、增量摄取、跳过策略。 |
+| `ingestion_pipeline/lifecycle/document_registry.py` | 维护文档登记、状态变更与来源映射。 | 文档注册、状态流转、来源追踪。 |
+| `ingestion_pipeline/lifecycle/document_manager.py` | 负责摄取侧文档删除、重建与生命周期管理。 | 生命周期编排、重建控制、与存储层级联协作。 |
+| `ingestion_pipeline/chunking/split.py` | 承担文档切分与 Chunk 构建。 | Recursive Splitter 接入、`image_refs` 保留、chunk 边界稳定性。 |
+| `ingestion_pipeline/transform/pipeline.py` | 编排 Transform 模块内部各增强步骤。 | 多步骤增强串联、失败隔离、阶段结果落盘。 |
+| `ingestion_pipeline/transform/smart_chunk_builder.py` | 对 Chunk 做智能重组、清洗与去噪。 | 邻近块合并、噪声剔除、上下文修复。 |
+| `ingestion_pipeline/transform/metadata_injection.py` | 为 Chunk 注入语义元数据。 | Title / Summary / Tags 生成、结构化 metadata 写入。 |
+| `ingestion_pipeline/transform/image_captioning.py` | 为图片生成 caption 并注入到 Chunk。 | Vision LLM 调用、图文上下文拼接、caption 融合。 |
+| `ingestion_pipeline/transform/services/metadata_service.py` | 为 Transform 阶段提供元数据增强辅助能力。 | 元数据归一化、规则封装、阶段间服务复用。 |
+| `ingestion_pipeline/embedding/pipeline.py` | 编排 Dense / Sparse 双路径编码。 | 双路结果聚合、批次切分、异常降级。 |
+| `ingestion_pipeline/embedding/dense_encoder.py` | 负责稠密向量编码。 | Dense Embedding 调用、向量归一化、批处理。 |
+| `ingestion_pipeline/embedding/sparse_encoder.py` | 负责稀疏向量编码。 | BM25 token/term 生成、稀疏表示构建。 |
+| `ingestion_pipeline/embedding/optimization.py` | 提供编码处理优化能力。 | 批处理、缓存、并发、重试与限流控制。 |
+| `ingestion_pipeline/storage/pipeline.py` | 编排摄取结果写入存储。 | 写入顺序控制、失败回滚、幂等保证。 |
+| `ingestion_pipeline/storage/vector_upsert.py` | 负责向量库 Upsert。 | Chroma Upsert、payload 组装、重复写入覆盖。 |
+| `ingestion_pipeline/storage/bm25_indexing.py` | 负责 BM25 索引构建。 | 倒排索引更新、文档级重建、删除同步。 |
+| `ingestion_pipeline/storage/image_storage.py` | 负责图片文件落盘与索引关联。 | 图片路径管理、二进制落盘、与文档生命周期联动。 |
+
+#### 5.3.5 `libs` 层
+
+| 模块 | 职责 | 关键技术点 |
+|---|---|---|
+| `libs/abstractions/` | 定义 Loader、Splitter、Transform、LLM、Vision LLM、Embedding、Reranker、VectorStore、Evaluator 抽象基类。 | 为 Chunking/Transform/Embedding/Storage 模块提供统一接口、实现可插拔、上层调用解耦。 |
 | `libs/factories/loader_factory.py` | 根据配置实例化 Loader。 | 配置驱动、provider 切换、默认实现选择。 |
-| `libs/factories/splitter_factory.py` | 根据配置实例化 Splitter。 | 统一切分接口、支持不同切分策略替换。 |
+| `libs/factories/splitter_factory.py` | 根据配置实例化 Splitter。 | 统一切分接口、供 Chunking 模块切换不同切分策略。 |
 | `libs/factories/llm_factory.py` | 根据配置实例化 LLM。 | 多 provider 屏蔽、认证与请求格式差异收敛。 |
-| `libs/factories/vision_llm_factory.py` | 根据配置实例化 Vision LLM。 | 图像输入封装、上下文拼接、GPT-4o / Qwen-VL 切换。 |
-| `libs/factories/embedding_factory.py` | 根据配置实例化 Dense Embedding。 | Dense provider 切换、批量请求统一。 |
+| `libs/factories/vision_llm_factory.py` | 根据配置实例化 Vision LLM。 | 图像输入封装、上下文拼接、供 Transform 模块切换 GPT-4o / Qwen-VL。 |
+| `libs/factories/embedding_factory.py` | 根据配置实例化 Dense Embedding。 | Dense provider 切换、供 Embedding 模块统一调用、批量请求统一。 |
 | `libs/factories/reranker_factory.py` | 根据配置实例化 Reranker。 | Cross-Encoder / LLM Rerank 插拔切换。 |
 | `libs/factories/vector_store_factory.py` | 根据配置实例化向量存储后端。 | Chroma 默认实现、接口保持可替换。 |
 | `libs/factories/evaluator_factory.py` | 根据配置实例化评估器。 | ragas / DeepEval / 自定义评估器统一装配。 |
@@ -1969,7 +2019,7 @@ RAGMS/                                                         # 项目根目录
 | `libs/providers/vector_stores/chroma_store.py` | 默认向量存储实现。 | Chroma 封装、payload + vector 原子写入。 |
 | `libs/providers/evaluators/*.py` | 各类评估后端实现。 | 标准化 `evaluate()` 接口、指标字典输出。 |
 
-#### 5.3.5 `storage` 层
+#### 5.3.6 `storage` 层
 
 | 模块 | 职责 | 关键技术点 |
 |---|---|---|
@@ -1985,7 +2035,7 @@ RAGMS/                                                         # 项目根目录
 | `storage/traces/jsonl_writer.py` | 将 Trace 以 JSONL 形式写入本地文件。 | 结构化日志、统一写入 `logs/traces.jsonl`。 |
 | `storage/traces/trace_repository.py` | 封装 Trace 的查询与存储接口。 | Trace 落盘抽象、供 Dashboard / tools 复用。 |
 
-#### 5.3.6 `observability` 层
+#### 5.3.7 `observability` 层
 
 | 模块 | 职责 | 关键技术点 |
 |---|---|---|
@@ -2005,7 +2055,7 @@ RAGMS/                                                         # 项目根目录
 | `observability/dashboard/pages/trace_viewer.py` | 展示 Query / Ingestion 两类 Trace 详情。 | 按 `trace_type` 分类、按 `trace_id` 查看链路。 |
 | `observability/dashboard/pages/evaluation_panel.py` | 展示评估结果与实验对比。 | 多后端评估结果聚合、case-by-case 分析。 |
 
-#### 5.3.7 `shared` 层
+#### 5.3.8 `shared` 层
 
 | 模块 | 职责 | 关键技术点 |
 |---|---|---|
@@ -2038,26 +2088,26 @@ RAGMS/                                                         # 项目根目录
          │ Document (text + metadata.images)
          ▼
 ┌─────────────────┐
-│    Splitter     │  按语义边界切分，保留图片引用
-│ (Recursive)     │
+│    Chunking     │  文档切分，保留图片引用并构建稳定 Chunk
+│ (Split Module)  │
 └────────┬────────┘
          │ Chunks[] (with image_refs)
          ▼
 ┌─────────────────┐
-│   Transform     │  LLM 重写 + Vision LLM 图片描述 + 元数据注入
-│ (Enrichment)    │
+│   Transform     │  智能重组/去噪 + 元数据注入 + Vision Caption
+│   (Enhance)     │
 └────────┬────────┘
          │ Enriched Chunks[] (with captions in text)
          ▼
 ┌─────────────────┐
-│   Embedding     │  Dense Embedding 生成 + BM25 入索引数据准备
-│  (Hybrid Prep)  │
+│   Embedding     │  Dense 编码 + Sparse(BM25) 编码 + 处理优化
+│   (Dual Encode) │
 └────────┬────────┘
          │ Vectors + Chunks + Metadata
          ▼
 ┌─────────────────┐
-│    Upsert       │  Chroma Upsert (幂等) + BM25 Index + 图片存储
-│   (Storage)     │
+│    Storage      │  Vector Upsert + BM25 Index + 图片文件存储
+│  (Persist)      │
 └─────────────────┘
 ```
 
@@ -2328,14 +2378,14 @@ dashboard:
 |------|---------|--------|------|
 | 阶段 A | 5 | 0 | 0% |
 | 阶段 B | 15 | 0 | 0% |
-| 阶段 C | 6 | 0 | 0% |
+| 阶段 C | 14 | 0 | 0% |
 | 阶段 D | 5 | 0 | 0% |
 | 阶段 E | 5 | 0 | 0% |
 | 阶段 F | 5 | 0 | 0% |
 | 阶段 G | 6 | 0 | 0% |
 | 阶段 H | 5 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **57** | **0** | **0%** |
+| **总计** | **65** | **0** | **0%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2387,10 +2437,10 @@ dashboard:
 
 ##### A5 建立本地启动脚本与最小冒烟测试
 
-- 目标：提供最小可运行的本地入口，验证工程骨架可执行。
-- 修改文件：`scripts/query_cli.py`、`scripts/run_dashboard.py`、`tests/integration/test_bootstrap_smoke.py`
-- 实现类/函数：`run_cli()`、`run_dashboard()`
-- 验收标准：CLI、Dashboard、MCP Server 启动脚本均可被调用；冒烟测试通过。
+- 目标：提供最小可运行的本地入口，验证工程骨架可执行，并为后续离线摄取 CLI 预留稳定入口。
+- 修改文件：`scripts/query_cli.py`、`scripts/run_dashboard.py`、`scripts/ingest_documents.py`、`tests/integration/test_bootstrap_smoke.py`
+- 实现类/函数：`run_cli()`、`run_dashboard()`、`ingest_documents_main()`
+- 验收标准：CLI、Dashboard、MCP Server、Ingestion CLI 启动脚本均可被调用；冒烟测试通过。
 - 测试方法：`pytest tests/integration/test_bootstrap_smoke.py`
 
 #### 阶段 B：实现核心抽象与工厂体系
@@ -2529,10 +2579,10 @@ dashboard:
 
 ##### B6 完成工厂装配集成冒烟
 
-- 目标：验证 `runtime/container.py` 能通过真实工厂创建默认组件。
-- 修改文件：`tests/integration/test_factory_wiring.py`
+- 目标：验证 `runtime/container.py` 能通过真实工厂创建默认组件与摄取主编排对象。
+- 修改文件：`src/ragms/runtime/container.py`、`tests/integration/test_factory_wiring.py`
 - 实现类/函数：`build_container()` 集成路径
-- 验收标准：默认配置下可成功装配 Loader、Splitter、VisionLLM、Embedding、VectorStore、LLM、Evaluator。
+- 验收标准：默认配置下可成功装配 Loader、Splitter、VisionLLM、Embedding、VectorStore、LLM、Evaluator、IngestionPipeline、PipelineCallback、DocumentRegistry、IngestionDocumentManager。
 - 测试方法：`pytest tests/integration/test_factory_wiring.py`
 
 #### 阶段 C：Ingestion Pipeline
@@ -2541,60 +2591,132 @@ dashboard:
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| C1 | 实现 File Integrity 与摄取历史存储 | [ ] |  |  |
-| C2 | 实现 Loader 与图片提取 | [ ] |  |  |
-| C3 | 实现 Splitter 与 Chunk 模型 | [ ] |  |  |
-| C4 | 实现 Transform 与多模态增强 | [ ] |  |  |
-| C5 | 实现 Embedding 与 Upsert | [ ] |  |  |
-| C6 | 打通 Ingestion Pipeline 与 CLI | [ ] |  |  |
+| C1 | 实现 Pipeline 主流程与回调协议 | [ ] |  |  |
+| C2 | 实现 File Integrity 与摄取历史存储 | [ ] |  |  |
+| C3 | 实现文档注册表与状态流转 | [ ] |  |  |
+| C4 | 实现文档生命周期管理 | [ ] |  |  |
+| C5 | 实现 Chunking 切分主流程 | [ ] |  |  |
+| C6 | 实现 Transform 主编排 | [ ] |  |  |
+| C7 | 实现 Chunk 智能重组与去噪 | [ ] |  |  |
+| C8 | 实现语义元数据注入 | [ ] |  |  |
+| C9 | 实现图片描述生成 | [ ] |  |  |
+| C10 | 实现 Dense Embedding 编码 | [ ] |  |  |
+| C11 | 实现 Sparse(BM25) 编码与处理优化 | [ ] |  |  |
+| C12 | 实现 Storage 主编排与向量库 Upsert | [ ] |  |  |
+| C13 | 实现 BM25 索引构建与图片文件存储 | [ ] |  |  |
+| C14 | 打通 Ingestion Pipeline 与 CLI 集成链路 | [ ] |  |  |
 
-##### C1 实现 File Integrity 与摄取历史存储
+##### C1 实现 Pipeline 主流程与回调协议
+
+- 目标：建立摄取主流程骨架，支持阶段前后回调、进度通知与错误收敛。
+- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/ingestion_pipeline/callbacks.py`、`tests/unit/ingestion_pipeline/test_pipeline_callbacks.py`
+- 实现类/函数：`IngestionPipeline.run()`、`PipelineCallback.on_stage_start()`、`PipelineCallback.on_stage_end()`
+- 验收标准：主流程可串联各子模块；回调在阶段边界被触发；失败可返回统一错误上下文。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/test_pipeline_callbacks.py`
+
+##### C2 实现 File Integrity 与摄取历史存储
 
 - 目标：支持 SHA256 增量判断和未变更跳过。
-- 修改文件：`src/ragms/core/ingestion_pipeline/file_integrity.py`、`src/ragms/storage/sqlite/repositories/ingestion_history.py`、`tests/unit/core/ingestion_pipeline/test_file_integrity.py`
+- 修改文件：`src/ragms/ingestion_pipeline/file_integrity.py`、`src/ragms/storage/sqlite/repositories/ingestion_history.py`、`tests/unit/ingestion_pipeline/test_file_integrity.py`
 - 实现类/函数：`FileIntegrity.compute_sha256()`、`FileIntegrity.should_skip()`、`IngestionHistoryRepository`
 - 验收标准：相同文件内容重复摄取会被跳过；内容变化会触发重新处理。
-- 测试方法：`pytest tests/unit/core/ingestion_pipeline/test_file_integrity.py`
+- 测试方法：`pytest tests/unit/ingestion_pipeline/test_file_integrity.py`
 
-##### C2 实现 Loader 与图片提取
+##### C3 实现文档注册表与状态流转
 
-- 目标：将 PDF 转换为 Markdown，并收集图片与基础元数据。
-- 修改文件：`src/ragms/libs/providers/loaders/markitdown_loader.py`、`src/ragms/core/models/document.py`、`tests/unit/core/ingestion_pipeline/test_loader_stage.py`
-- 实现类/函数：`MarkItDownLoader.load()`、`Document.from_loader_output()`
-- 验收标准：样例 PDF 可转为 Markdown；图片引用和基础 metadata 可被提取。
-- 测试方法：`pytest tests/unit/core/ingestion_pipeline/test_loader_stage.py`
+- 目标：建立摄取文档注册表，记录状态、来源与当前处理阶段。
+- 修改文件：`src/ragms/ingestion_pipeline/lifecycle/document_registry.py`、`tests/unit/ingestion_pipeline/lifecycle/test_document_registry.py`
+- 实现类/函数：`DocumentRegistry.register()`、`DocumentRegistry.update_status()`
+- 验收标准：文档可完成注册、状态迁移与来源查询；非法状态跳转会被拦截。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/lifecycle/test_document_registry.py`
 
-##### C3 实现 Splitter 与 Chunk 模型
+##### C4 实现文档生命周期管理
+
+- 目标：实现摄取侧文档重建、删除与状态恢复编排。
+- 修改文件：`src/ragms/ingestion_pipeline/lifecycle/document_manager.py`、`tests/unit/ingestion_pipeline/lifecycle/test_document_manager.py`
+- 实现类/函数：`IngestionDocumentManager.rebuild()`、`IngestionDocumentManager.delete()`
+- 验收标准：文档可触发重建与删除；生命周期操作能驱动注册表与存储层联动。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/lifecycle/test_document_manager.py`
+
+##### C5 实现 Chunking 切分主流程
 
 - 目标：将文档稳定切分为带定位与图片引用的 chunk。
-- 修改文件：`src/ragms/core/models/chunk.py`、`src/ragms/core/ingestion_pipeline/stages/split.py`、`tests/unit/core/ingestion_pipeline/test_split_stage.py`
-- 实现类/函数：`SplitStage.run()`、`Chunk.build_id()`
+- 修改文件：`src/ragms/core/models/chunk.py`、`src/ragms/ingestion_pipeline/chunking/split.py`、`tests/unit/ingestion_pipeline/chunking/test_split.py`
+- 实现类/函数：`ChunkingPipeline.run()`、`Chunk.build_id()`
 - 验收标准：chunk 数量、offset、`image_refs`、`chunk_id` 稳定性符合预期。
-- 测试方法：`pytest tests/unit/core/ingestion_pipeline/test_split_stage.py`
+- 测试方法：`pytest tests/unit/ingestion_pipeline/chunking/test_split.py`
 
-##### C4 实现 Transform 与多模态增强
+##### C6 实现 Transform 主编排
 
-- 目标：完成 LLM 重写、元数据注入、图片描述生成。
-- 修改文件：`src/ragms/core/ingestion_pipeline/stages/transform.py`、`src/ragms/core/ingestion_pipeline/services/metadata_service.py`、`tests/unit/core/ingestion_pipeline/test_transform_stage.py`
-- 实现类/函数：`TransformStage.run()`、`MetadataService.enrich()`、`inject_image_caption()`、`VisionLLMFactory.create()`
-- 验收标准：Transform 后的 chunk 含增强文本与 metadata；无图文档可正常通过。
-- 测试方法：`pytest tests/unit/core/ingestion_pipeline/test_transform_stage.py`
+- 目标：编排 Transform 阶段内部增强步骤，形成统一的 Smart Chunk 输出。
+- 修改文件：`src/ragms/ingestion_pipeline/transform/pipeline.py`、`tests/unit/ingestion_pipeline/transform/test_pipeline.py`
+- 实现类/函数：`TransformPipeline.run()`
+- 验收标准：Transform 可按顺序执行重组、元数据注入、图片描述等步骤；单个步骤失败时具备可控降级行为。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_pipeline.py`
 
-##### C5 实现 Embedding 与 Upsert
+##### C7 实现 Chunk 智能重组与去噪
 
-- 目标：完成 Dense Embedding、BM25 索引构建以及 Chroma/BM25/图片的统一写入。
-- 修改文件：`src/ragms/core/ingestion_pipeline/stages/embed.py`、`src/ragms/core/ingestion_pipeline/stages/upsert.py`、`src/ragms/storage/indexes/bm25_indexer.py`、`src/ragms/storage/images/image_storage.py`
-- 实现类/函数：`EmbedStage.run()`、`UpsertStage.run()`、`BM25Indexer.index_document()`
-- 验收标准：样例文档可写入 Chroma 与 BM25；图片可落盘；重复写入幂等。
-- 测试方法：`pytest tests/integration/test_ingestion_pipeline_storage.py`
+- 目标：对切分后的 chunk 进行智能拼接、去噪与上下文修复。
+- 修改文件：`src/ragms/ingestion_pipeline/transform/smart_chunk_builder.py`、`tests/unit/ingestion_pipeline/transform/test_smart_chunk_builder.py`
+- 实现类/函数：`SmartChunkBuilder.rewrite()`、`SmartChunkBuilder.denoise()`
+- 验收标准：噪声段落会被清理；邻近上下文可按规则合并；输出结构保持稳定。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_smart_chunk_builder.py`
 
-##### C6 打通 Ingestion Pipeline 与 CLI
+##### C8 实现语义元数据注入
 
-- 目标：完成离线摄取主编排器与命令行入口。
-- 修改文件：`src/ragms/core/ingestion_pipeline/pipeline.py`、`scripts/ingest_documents.py`、`tests/integration/test_ingestion_pipeline.py`
+- 目标：为 chunk 注入 Title、Summary、Tags 等语义元数据。
+- 修改文件：`src/ragms/ingestion_pipeline/transform/metadata_injection.py`、`src/ragms/ingestion_pipeline/transform/services/metadata_service.py`、`tests/unit/ingestion_pipeline/transform/test_metadata_injection.py`
+- 实现类/函数：`inject_semantic_metadata()`、`MetadataService.enrich()`
+- 验收标准：元数据可被稳定注入到 chunk；无标题或短文本场景处理明确。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_metadata_injection.py`
+
+##### C9 实现图片描述生成
+
+- 目标：调用 Vision LLM 为图片生成 caption 并注入到关联 chunk。
+- 修改文件：`src/ragms/ingestion_pipeline/transform/image_captioning.py`、`tests/unit/ingestion_pipeline/transform/test_image_captioning.py`
+- 实现类/函数：`inject_image_caption()`、`generate_image_caption()`
+- 验收标准：单图、多图、无图场景均可处理；Vision LLM 不可用时具备明确降级策略。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_image_captioning.py`
+
+##### C10 实现 Dense Embedding 编码
+
+- 目标：完成稠密向量编码与批处理编排。
+- 修改文件：`src/ragms/ingestion_pipeline/embedding/dense_encoder.py`、`tests/unit/ingestion_pipeline/embedding/test_dense_encoder.py`
+- 实现类/函数：`DenseEncoder.encode_documents()`、`DenseEncoder.encode_query()`
+- 验收标准：文本可批量编码为稳定向量；空输入与异常响应场景可被正确处理。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/embedding/test_dense_encoder.py`
+
+##### C11 实现 Sparse(BM25) 编码与处理优化
+
+- 目标：完成 BM25 稀疏编码、批处理优化、缓存与并发控制。
+- 修改文件：`src/ragms/ingestion_pipeline/embedding/sparse_encoder.py`、`src/ragms/ingestion_pipeline/embedding/optimization.py`、`tests/unit/ingestion_pipeline/embedding/test_sparse_encoder.py`、`tests/unit/ingestion_pipeline/embedding/test_optimization.py`
+- 实现类/函数：`SparseEncoder.encode()`、`optimize_embedding_batches()`
+- 验收标准：BM25 token/term 结果稳定；大批量输入可按批次处理；优化逻辑不改变编码结果语义。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/embedding/test_sparse_encoder.py tests/unit/ingestion_pipeline/embedding/test_optimization.py`
+
+##### C12 实现 Storage 主编排与向量库 Upsert
+
+- 目标：编排摄取结果写入流程，并完成向量库写入。
+- 修改文件：`src/ragms/ingestion_pipeline/storage/pipeline.py`、`src/ragms/ingestion_pipeline/storage/vector_upsert.py`、`tests/unit/ingestion_pipeline/storage/test_pipeline.py`、`tests/unit/ingestion_pipeline/storage/test_vector_upsert.py`
+- 实现类/函数：`StoragePipeline.run()`、`VectorUpsert.write()`
+- 验收标准：Dense 向量、chunk、metadata 可统一写入；重复写入保持幂等。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/storage/test_pipeline.py tests/unit/ingestion_pipeline/storage/test_vector_upsert.py`
+
+##### C13 实现 BM25 索引构建与图片文件存储
+
+- 目标：完成 BM25 索引更新与图片文件落盘。
+- 修改文件：`src/ragms/ingestion_pipeline/storage/bm25_indexing.py`、`src/ragms/ingestion_pipeline/storage/image_storage.py`、`src/ragms/storage/indexes/bm25_indexer.py`、`src/ragms/storage/images/image_storage.py`、`tests/unit/ingestion_pipeline/storage/test_bm25_indexing.py`、`tests/unit/ingestion_pipeline/storage/test_image_storage.py`
+- 实现类/函数：`BM25StorageWriter.index()`、`ImageStorageWriter.save_all()`、`BM25Indexer.index_document()`
+- 验收标准：BM25 索引可增量更新；图片可稳定落盘并建立文档关联。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/storage/test_bm25_indexing.py tests/unit/ingestion_pipeline/storage/test_image_storage.py`
+
+##### C14 打通 Ingestion Pipeline 与 CLI 集成链路
+
+- 目标：完成离线摄取主编排器、CLI 入口与存储集成测试。
+- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`scripts/ingest_documents.py`、`tests/integration/test_ingestion_pipeline.py`、`tests/integration/test_ingestion_pipeline_storage.py`
 - 实现类/函数：`IngestionPipeline.run()`、`ingest_documents_main()`
-- 验收标准：样例 PDF 能从 CLI 完整入库；增量跳过生效；返回结构完整。
-- 测试方法：`pytest tests/integration/test_ingestion_pipeline.py`
+- 验收标准：样例 PDF 能从 CLI 完整入库；增量跳过生效；Chroma/BM25/图片存储集成通过。
+- 测试方法：`pytest tests/integration/test_ingestion_pipeline.py tests/integration/test_ingestion_pipeline_storage.py`
 
 #### 阶段 D：Retrieval（Dense + Sparse + RRF + 可选 Rerank）
 
@@ -2731,7 +2853,7 @@ dashboard:
 ##### F3 为 Ingestion 打点
 
 - 目标：在 File Integrity、Loader、Splitter、Transform、Embedding、Upsert 等阶段统一打点。
-- 修改文件：`src/ragms/core/ingestion_pipeline/pipeline.py`、`src/ragms/core/ingestion_pipeline/stages/load.py`、`src/ragms/core/ingestion_pipeline/stages/split.py`、`src/ragms/core/ingestion_pipeline/stages/transform.py`、`src/ragms/core/ingestion_pipeline/stages/embed.py`、`src/ragms/core/ingestion_pipeline/stages/upsert.py`
+- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/ingestion_pipeline/chunking/split.py`、`src/ragms/ingestion_pipeline/transform/pipeline.py`、`src/ragms/ingestion_pipeline/embedding/pipeline.py`、`src/ragms/ingestion_pipeline/storage/pipeline.py`
 - 实现类/函数：`record_ingestion_stage()`
 - 验收标准：Ingestion Trace 可完整显示各阶段耗时、状态和关键摘要。
 - 测试方法：`pytest tests/integration/test_ingestion_trace_logging.py`
@@ -2747,7 +2869,7 @@ dashboard:
 ##### F5 增加进度回调与双链路集成测试
 
 - 目标：为 Ingestion / Dashboard 增加进度回调，并完成双链路 Trace 集成验证。
-- 修改文件：`src/ragms/core/ingestion_pipeline/pipeline.py`、`src/ragms/observability/dashboard/services/trace_service.py`
+- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/observability/dashboard/services/trace_service.py`
 - 实现类/函数：`on_progress`、`TraceService.list_traces()`
 - 验收标准：摄取过程可实时回传进度；Dashboard 可按类型读取 Trace。
 - 测试方法：`pytest tests/integration/test_trace_write_and_read.py`
