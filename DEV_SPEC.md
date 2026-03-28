@@ -1,6 +1,6 @@
 # DEV_SPEC
 
-Version: `0.0.9`
+Version: `0.0.10`
 
 ## 目录
 
@@ -1655,7 +1655,7 @@ RAGMS/                                                         # 项目根目录
 │       │   │   │   ├── dense_retriever.py                     # 稠密向量检索器
 │       │   │   │   └── sparse_retriever.py                    # 稀疏 / BM25 检索器
 │       │   │   ├── reranker.py                                # 可选精排器封装
-│       │   │   ├── response_builder.py                        # Response Builder：引用、图片编码、MCP 格式化
+│       │   │   ├── response_builder.py                        # Response Builder：引用、图片内容与结构化响应拼装
 │       │   │   ├── citation_builder.py                        # 引用构建器
 │       │   │   └── answer_generator.py                        # 回答生成器
 │       │   ├── management/                                    # 管理操作服务层
@@ -1835,11 +1835,18 @@ RAGMS/                                                         # 项目根目录
 │   │   │   │   └── test_llm_reranker.py                       # LLM Reranker 测试
 │   │   │   └── test_provider_wiring_smoke.py                  # provider 装配冒烟测试
 │   │   ├── core/                                              # 核心业务层单元测试
+│   │   │   ├── models/                                        # 核心领域模型单元测试
+│   │   │   │   └── test_retrieval_models.py                   # 检索结果模型测试
 │   │   │   ├── query_engine/                                  # 查询引擎单元测试
 │   │   │   │   ├── test_query_processor.py                    # Query Processor 测试
-│   │   │   │   ├── test_retrievers.py                         # Dense / Sparse 检索器测试
+│   │   │   │   ├── test_dense_retriever.py                    # Dense Retriever 测试
+│   │   │   │   ├── test_sparse_retriever.py                   # Sparse Retriever 测试
 │   │   │   │   ├── test_rrf.py                                # RRF 融合测试
-│   │   │   │   └── test_reranker.py                           # Reranker 测试
+│   │   │   │   ├── test_hybrid_search.py                      # Hybrid Search 编排测试
+│   │   │   │   ├── test_reranker.py                           # Reranker 测试
+│   │   │   │   ├── test_response_builder.py                   # Response Builder 测试
+│   │   │   │   ├── test_citation_builder.py                   # Citation Builder 测试
+│   │   │   │   └── test_answer_generator.py                   # Answer Generator 测试
 │   │   │   ├── evaluation/                                    # 评估模块单元测试
 │   │   │   │   ├── test_dataset_loader.py                     # 评估数据集加载测试
 │   │   │   │   ├── test_composite_evaluator.py                # 组合评估器测试
@@ -1943,7 +1950,7 @@ RAGMS/                                                         # 项目根目录
 | `mcp_server/protocol_handler.py` | 处理工具调用的参数解析、校验、响应包装与异常转换。 | 协议解耦、统一响应结构、错误拦截。 |
 | `mcp_server/tool_registry.py` | 维护工具注册表，集中定义哪些能力对外可见。 | 工具声明集中管理、便于扩展和测试。 |
 | `mcp_server/schemas.py` | 定义 MCP 工具入参与出参结构。 | 请求/响应 schema、类型约束、兼容性控制。 |
-| `mcp_server/tools/query.py` | 暴露 `query_knowledge_hub`，调用 `Query Processor / Hybrid Search / Response Builder`。 | MCP 入参解析、Query Flow 透传、TextContent/ImageContent 输出。 |
+| `mcp_server/tools/query.py` | 暴露 `query_knowledge_hub`，调用 `Query Engine` 并将通用结构化结果适配为 MCP 输出。 | MCP 入参解析、Query Flow 透传、TextContent/ImageContent 适配输出。 |
 | `mcp_server/tools/ingest.py` | 暴露 `ingest_documents`，调用 `Ingestion Pipeline`。 | 批量文档受理、增量跳过、强制重建。 |
 | `mcp_server/tools/collections.py` | 暴露 `list_collections`。 | 集合枚举、状态汇总、基础管理接口。 |
 | `mcp_server/tools/documents.py` | 暴露 `get_document_summary`。 | 文档级回溯、与 SQLite 元数据联动。 |
@@ -1960,7 +1967,7 @@ RAGMS/                                                         # 项目根目录
 | `core/query_engine/hybrid_search.py` | 统一编排 Dense Retrieval、Sparse Retrieval 与 RRF Fusion。 | 双路检索并行、RRF 融合、Top-M 候选生成。 |
 | `core/query_engine/retrievers/` | 实现 Dense Retrieval 与 Sparse Retrieval。 | 向量检索、BM25 检索、检索结果标准化。 |
 | `core/query_engine/reranker.py` | 对候选结果执行可选重排。 | CrossEncoder / LLM / None 三种模式切换。 |
-| `core/query_engine/response_builder.py` | 生成 MCP 最终响应，附带引用和图片内容。 | 引用拼装、图片 Base64 编码、MCP 格式封装。 |
+| `core/query_engine/response_builder.py` | 生成 CLI / MCP 共用的通用结构化响应，附带引用和图片内容。 | 引用拼装、图片 Base64 编码、结果结构标准化。 |
 | `core/query_engine/citation_builder.py` | 从检索结果构建引用信息。 | chunk 溯源、路径/页码映射、引用规范化。 |
 | `core/query_engine/answer_generator.py` | 调用 LLM 生成最终回答。 | 统一 LLM 接口、答案生成、上下文使用控制。 |
 | `core/management/data_service.py` | 为 Dashboard 提供文档列表、Chunk 详情、图片预览等数据读取能力。 | Chroma 元数据查询、图片列表聚合、只读数据服务。 |
@@ -2158,7 +2165,7 @@ RAGMS/                                                         # 项目根目录
          │ Top-K 精排结果
          ▼
 ┌─────────────────┐
-│ Response Builder│  引用生成 + 图片 Base64 编码 + MCP 格式化
+│ Response Builder│  引用生成 + 图片 Base64 编码 + 结构化响应构建
 │                 │
 └────────┬────────┘
          │ MCP Response (TextContent + ImageContent)
@@ -2383,7 +2390,7 @@ dashboard:
 | 阶段 A | 5 | 0 | 0% |
 | 阶段 B | 15 | 0 | 0% |
 | 阶段 C | 14 | 0 | 0% |
-| 阶段 D | 5 | 0 | 0% |
+| 阶段 D | 8 | 0 | 0% |
 | 阶段 E | 5 | 0 | 0% |
 | 阶段 F | 5 | 0 | 0% |
 | 阶段 G | 6 | 0 | 0% |
@@ -2722,57 +2729,84 @@ dashboard:
 - 验收标准：样例 PDF 能从 CLI 完整入库；增量跳过生效；Chroma/BM25/图片存储集成通过。
 - 测试方法：`pytest tests/integration/test_ingestion_pipeline.py tests/integration/test_ingestion_pipeline_storage.py`
 
-#### 阶段 D：Retrieval（Dense + Sparse + RRF + 可选 Rerank）
+#### 阶段 D：Retrieval（Query Processor + Dense/Sparse + RRF + Rerank）
 
-目标：在线查询链路跑通。
+目标：在线查询链路跑通，能够完成 Query 预处理、Dense/Sparse 双路召回、RRF 融合、带 fallback 的可选精排，并通过本地查询 CLI 返回答案、引用与结构化结果。
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| D1 | 实现 Query Processor | [ ] |  |  |
-| D2 | 实现 Dense / Sparse Retrieval | [ ] |  |  |
-| D3 | 实现 Hybrid Search 与 RRF | [ ] |  |  |
-| D4 | 实现可选 Rerank | [ ] |  |  |
-| D5 | 打通 Query Engine 与查询 CLI | [ ] |  |  |
+| D1 | 实现 Query Processor 关键词提取与 Filter 解析 | [ ] |  |  |
+| D2 | 定义 Retrieval 结果模型 | [ ] |  |  |
+| D3 | 实现 DenseRetriever（调用 `BaseVectorStore.query`） | [ ] |  |  |
+| D4 | 实现 SparseRetriever（BM25 查询） | [ ] |  |  |
+| D5 | 实现 RRF 融合 | [ ] |  |  |
+| D6 | 实现 HybridSearch 编排 | [ ] |  |  |
+| D7 | 实现 Reranker（Core 编排 + Fallback） | [ ] |  |  |
+| D8 | 打通 Query Engine 与查询 CLI | [ ] |  |  |
 
-##### D1 实现 Query Processor
+##### D1 实现 Query Processor 关键词提取与 Filter 解析
 
-- 目标：完成用户查询的关键词提取、同义词扩展与 metadata 过滤解析。
+- 目标：完成 Query 归一化、关键词提取、受控扩展与 metadata filter 解析，为 Dense/Sparse 两条路线生成统一输入。
 - 修改文件：`src/ragms/core/query_engine/query_processor.py`、`tests/unit/core/query_engine/test_query_processor.py`
-- 实现类/函数：`QueryProcessor.process()`
-- 验收标准：输入 Query 可被规范化；filters 可被正确解析。
+- 实现类/函数：`QueryProcessor.extract_keywords()`、`QueryProcessor.parse_filters()`、`QueryProcessor.process()`
+- 验收标准：输入 Query 可完成空白归一化、关键词提取与停用词过滤；`collection`、`top_k`、`filters` 等请求参数可被正确校验与解析；可输出 Dense 路线使用的标准化 query、Sparse 路线使用的关键词表达式以及可前置/后置过滤信息。
 - 测试方法：`pytest tests/unit/core/query_engine/test_query_processor.py`
 
-##### D2 实现 Dense / Sparse Retrieval
+##### D2 定义 Retrieval 结果模型
 
-- 目标：完成向量检索与 BM25 检索两条召回路径。
-- 修改文件：`src/ragms/core/query_engine/retrievers/dense_retriever.py`、`src/ragms/core/query_engine/retrievers/sparse_retriever.py`、`tests/unit/core/query_engine/test_retrievers.py`
-- 实现类/函数：`DenseRetriever.retrieve()`、`SparseRetriever.retrieve()`
-- 验收标准：两类检索器均可独立工作并返回统一结果结构。
-- 测试方法：`pytest tests/unit/core/query_engine/test_retrievers.py`
+- 目标：在 `core/models/retrieval.py` 中定义检索链路统一使用的候选与结果模型，作为 Dense / Sparse / RRF / Reranker 的共享数据契约。
+- 修改文件：`src/ragms/core/models/retrieval.py`、`tests/unit/core/models/test_retrieval_models.py`
+- 实现类/函数：`RetrievalCandidate`、`HybridSearchResult`
+- 验收标准：检索结果模型可统一表达 `chunk_id`、`document_id`、content、metadata、score、source_route` 等核心字段，并兼容 `dense_rank`、`sparse_rank`、`rrf_score`、`rerank_score`、fallback 标记等阶段补充信息；序列化与比较行为稳定。
+- 测试方法：`pytest tests/unit/core/models/test_retrieval_models.py`
 
-##### D3 实现 Hybrid Search 与 RRF
+##### D3 实现 DenseRetriever（调用 `BaseVectorStore.query`）
 
-- 目标：完成双路召回并行与 RRF 融合。
+- 目标：实现稠密检索路径，基于单次 Query Embedding 调用向量库查询并返回 `RetrievalCandidate`。
+- 修改文件：`src/ragms/core/models/retrieval.py`、`src/ragms/core/query_engine/retrievers/dense_retriever.py`、`tests/unit/core/query_engine/test_dense_retriever.py`
+- 实现类/函数：`DenseRetriever.retrieve()`
+- 验收标准：DenseRetriever 会基于标准化 query 只生成一次查询向量，并调用 `BaseVectorStore.query()` 执行检索；支持 `collection` 与可前置 metadata filter；返回结果统一为 `RetrievalCandidate` 列表，至少包含 `chunk_id`、`document_id`、score、metadata、source_route=`dense` 等标准字段。
+- 测试方法：`pytest tests/unit/core/query_engine/test_dense_retriever.py`
+
+##### D4 实现 SparseRetriever（BM25 查询）
+
+- 目标：实现稀疏检索路径，基于关键词表达式执行 BM25 查询并返回 `RetrievalCandidate`。
+- 修改文件：`src/ragms/core/models/retrieval.py`、`src/ragms/core/query_engine/retrievers/sparse_retriever.py`、`src/ragms/storage/indexes/bm25_indexer.py`、`tests/unit/core/query_engine/test_sparse_retriever.py`
+- 实现类/函数：`SparseRetriever.retrieve()`、`BM25Indexer.search()`
+- 验收标准：SparseRetriever 会对“原始关键词 + 受控扩展词”执行一次 BM25 查询，而不是对每个扩展词分别检索；支持 `collection` 与可前置 metadata filter；返回结果统一为 `RetrievalCandidate` 列表，至少包含 `chunk_id`、`document_id`、score、metadata、source_route=`sparse` 等标准字段。
+- 测试方法：`pytest tests/unit/core/query_engine/test_sparse_retriever.py`
+
+##### D5 实现 RRF 融合
+
+- 目标：实现基于排名的 Dense/Sparse 结果融合，保证混合召回排序稳定且可解释。
 - 修改文件：`src/ragms/core/query_engine/hybrid_search.py`、`tests/unit/core/query_engine/test_rrf.py`
-- 实现类/函数：`HybridSearch.search()`、`reciprocal_rank_fusion()`
-- 验收标准：Dense/Sparse 结果可融合；融合排序稳定。
+- 实现类/函数：`reciprocal_rank_fusion()`
+- 验收标准：RRF 仅基于排名而非原始分数做融合；重复命中文档会被去重并自然提升；单路强命中结果可被保留；不同输入顺序下融合结果稳定，`k` 平滑参数可配置。
 - 测试方法：`pytest tests/unit/core/query_engine/test_rrf.py`
 
-##### D4 实现可选 Rerank
+##### D6 实现 HybridSearch 编排
 
-- 目标：实现 `cross_encoder / llm / none` 三种精排模式。
+- 目标：编排 DenseRetriever、SparseRetriever、Pre/Post-filter 与 RRF 融合，形成统一候选集输出。
+- 修改文件：`src/ragms/core/query_engine/hybrid_search.py`、`tests/unit/core/query_engine/test_hybrid_search.py`
+- 实现类/函数：`HybridSearch.search()`
+- 验收标准：HybridSearch 可并行调度 Dense / Sparse 两条召回路径；前置过滤条件会传递给检索器，后置过滤条件会在融合前后按策略执行；输出结果会按 `candidate_top_n` 截断，并保留 route 来源、融合分数、过滤统计等编排信息。
+- 测试方法：`pytest tests/unit/core/query_engine/test_hybrid_search.py`
+
+##### D7 实现 Reranker（Core 编排 + Fallback）
+
+- 目标：在 Core 层实现 `cross_encoder / llm_reranker / disabled` 三种精排模式，并在不可用时自动回退到 RRF 结果。
 - 修改文件：`src/ragms/core/query_engine/reranker.py`、`tests/unit/core/query_engine/test_reranker.py`
-- 实现类/函数：`Reranker.run()`
-- 验收标准：Rerank 可开关；不同 backend 切换后返回结构一致。
+- 实现类/函数：`Reranker.run()`、`Reranker.run_with_fallback()`
+- 验收标准：Reranker 可根据配置切换 `cross_encoder`、`llm_reranker` 与 `disabled` 三种模式；重排输入固定取 HybridSearch 输出的 `candidate_top_n`；当 reranker 初始化失败、调用超时或执行报错时，请求级自动回退到 RRF 排序结果，并保留统一的 `RetrievalCandidate` / `HybridSearchResult` 结构与 fallback 标记。
 - 测试方法：`pytest tests/unit/core/query_engine/test_reranker.py`
 
-##### D5 打通 Query Engine 与查询 CLI
+##### D8 打通 Query Engine 与查询 CLI
 
-- 目标：形成 `Query Processor -> Hybrid Search -> Reranker -> Response Builder` 的完整在线链路。
-- 修改文件：`src/ragms/core/query_engine/engine.py`、`src/ragms/core/query_engine/response_builder.py`、`src/ragms/core/query_engine/citation_builder.py`、`src/ragms/core/query_engine/answer_generator.py`、`scripts/query_cli.py`
-- 实现类/函数：`QueryEngine.run()`、`ResponseBuilder.build()`
-- 验收标准：本地 CLI 可返回答案、引用和结构化结果。
-- 测试方法：`pytest tests/integration/test_query_engine.py`
+- 目标：形成 `Query Processor -> Hybrid Search -> Reranker -> Response Builder -> Answer Generator` 的完整在线链路，并对外提供稳定的本地 CLI 入口，同时为后续 Query Trace 接入预留稳定扩展点。
+- 修改文件：`src/ragms/core/query_engine/engine.py`、`src/ragms/core/query_engine/response_builder.py`、`src/ragms/core/query_engine/citation_builder.py`、`src/ragms/core/query_engine/answer_generator.py`、`scripts/query_cli.py`、`tests/unit/core/query_engine/test_response_builder.py`、`tests/unit/core/query_engine/test_citation_builder.py`、`tests/unit/core/query_engine/test_answer_generator.py`、`tests/integration/test_query_engine.py`
+- 实现类/函数：`QueryEngine.run()`、`ResponseBuilder.build()`、`CitationBuilder.build()`、`AnswerGenerator.generate()`、`run_cli()`
+- 验收标准：样例 Query 可从 CLI 触发完整在线查询链路；返回结果包含答案正文、引用信息与结构化候选摘要；Query Engine 对 Trace 上下文透传和阶段打点预留稳定扩展点；无结果查询、filter 生效、reranker fallback 等关键路径均可被集成测试覆盖。
+- 测试方法：`pytest tests/unit/core/query_engine/test_response_builder.py tests/unit/core/query_engine/test_citation_builder.py tests/unit/core/query_engine/test_answer_generator.py tests/integration/test_query_engine.py`
 
 #### 阶段 E：MCP Server 层与 Tools 落地
 
