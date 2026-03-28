@@ -1,6 +1,6 @@
 # DEV_SPEC
 
-Version: `0.0.7`
+Version: `0.0.9`
 
 ## 目录
 
@@ -323,7 +323,7 @@ Loader 的输入是原始文件路径与基础任务上下文，输出是 canoni
 Loader 层关键要求：
 
 - 在任何解析动作之前，先计算原始文件字节级 SHA256 哈希指纹。
-- 基于该哈希检索 `ingestion_history` 表，默认采用 SQLite，可插拔存储路径为 `data/db/ingestion_history.db`。
+- 基于该哈希检索 `ingestion_history` 表，默认采用统一的 SQLite 元数据库，可插拔存储路径为 `data/metadata/ragms.db`。
 - 若哈希已存在且未要求强制重建，则直接跳过后续解析与向量化流程。
 - 若仅文件名或路径变化而内容哈希不变，则视为同一内容版本，更新来源映射关系，不重复解析和索引。
 - Loader 需要在解析阶段同步抽取或补齐基础 metadata，至少包括：
@@ -991,7 +991,7 @@ logs/traces.jsonl
 推荐的实现职责拆分：
 
 - `trace_manager.py`：Trace 上下文创建、阶段注册、结束收敛、落盘。
-- `trace_models.py`：`QueryTrace`、`IngestionTrace`、`StageTrace` 等数据结构定义。
+- `trace_schema.py`：`QueryTrace`、`IngestionTrace`、`StageTrace` 等数据结构定义。
 - `trace_logger.py`：`logging` 与 JSON Formatter 封装。
 - `trace_utils.py`：输入输出摘要裁剪、异常序列化、时间统计、敏感字段脱敏。
 
@@ -1568,7 +1568,7 @@ E2E 测试需要重点回答以下问题：
 | Observability 层 (可观测性)                                                                                           |
 |----------------------------------------------------------------------------------------------------------------------|
 | TraceService | JSONL Logger | Metrics Aggregation | Streamlit Dashboard                                               |
-| Pages: 系统总览 / 数据浏览 / Ingestion 管理 / Trace 查看 / 评估面板                                                   |
+| Pages: 系统总览 / 数据浏览 / Ingestion 管理 / Ingestion 追踪 / Query 追踪 / 评估面板                                  |
 +----------------------------------------------------------------------------------------------------------------------+
 ```
 
@@ -1616,7 +1616,6 @@ RAGMS/                                                         # 项目根目录
 │   ├── traces.jsonl                                           # Query / Ingestion 统一 Trace 日志文件
 │   └── dashboard/                                             # Dashboard 运行日志
 ├── src/                                                       # 源代码主目录
-│   ├── __init__.py                                            # 源码包根初始化文件
 │   └── ragms/                                                 # 项目主 Python 包
 │       ├── __init__.py                                        # 主包初始化文件
 │       ├── runtime/                                           # 运行时装配层
@@ -1633,19 +1632,18 @@ RAGMS/                                                         # 项目根目录
 │       │   ├── schemas.py                                     # MCP 输入输出数据结构定义
 │       │   └── tools/                                         # 对外暴露的 MCP 工具实现
 │       │       ├── __init__.py                                # tools 子包初始化文件
-│       │       ├── query.py                                   # 查询知识库工具
-│       │       ├── ingest.py                                  # 文档摄取工具
-│       │       ├── collections.py                             # 集合管理工具
-│       │       ├── documents.py                               # 文档查看与管理工具
-│       │       ├── traces.py                                  # Trace 查询工具
-│       │       └── evaluation.py                              # 评估触发与结果查询工具
+│       │       ├── query.py                                   # `query_knowledge_hub` 工具适配器
+│       │       ├── ingest.py                                  # `ingest_documents` 工具适配器
+│       │       ├── collections.py                             # `list_collections` 工具适配器
+│       │       ├── documents.py                               # `get_document_summary` 工具适配器
+│       │       ├── traces.py                                  # `get_trace_detail` 工具适配器
+│       │       └── evaluation.py                              # `evaluate_collection` 工具适配器
 │       ├── core/                                              # 核心业务逻辑层
 │       │   ├── __init__.py                                    # core 子包初始化文件
 │       │   ├── models/                                        # 核心领域模型
 │       │   │   ├── document.py                                # 文档模型定义
 │       │   │   ├── chunk.py                                   # chunk 模型定义
 │       │   │   ├── retrieval.py                               # 检索结果模型定义
-│       │   │   ├── trace.py                                   # Trace 模型定义
 │       │   │   ├── evaluation.py                              # 评估结果模型定义
 │       │   │   └── response.py                                # 响应对象模型定义
 │       │   ├── query_engine/                                  # 在线查询引擎
@@ -1663,7 +1661,7 @@ RAGMS/                                                         # 项目根目录
 │       │   ├── management/                                    # 管理操作服务层
 │       │   │   ├── __init__.py                                # management 子包初始化文件
 │       │   │   ├── data_service.py                            # Dashboard 数据浏览服务
-│       │   │   ├── document_manager.py                        # 文档级管理服务
+│       │   │   ├── document_admin_service.py                  # 文档级管理服务
 │       │   │   └── trace_service.py                           # Trace 查询与聚合服务
 │       │   ├── evaluation/                                    # 评估编排模块
 │       │   │   ├── __init__.py                                # evaluation 子包初始化文件
@@ -1676,7 +1674,7 @@ RAGMS/                                                         # 项目根目录
 │       │   └── trace_collector/                               # Trace 收集与管理模块
 │       │       ├── __init__.py                                # trace_collector 子包初始化文件
 │       │       ├── trace_manager.py                           # Trace 管理器
-│       │       ├── trace_models.py                            # Trace 数据结构定义
+│       │       ├── trace_schema.py                            # Trace 数据结构定义
 │       │       ├── stage_recorder.py                          # 阶段记录器
 │       │       └── trace_utils.py                             # Trace 辅助工具
 │       ├── ingestion_pipeline/                                # 离线数据摄取流水线
@@ -1686,7 +1684,7 @@ RAGMS/                                                         # 项目根目录
 │       │   ├── file_integrity.py                              # File Integrity：SHA256 去重与增量判断
 │       │   ├── lifecycle/                                     # 文档生命周期与状态管理
 │       │   │   ├── document_registry.py                       # 文档注册表与状态映射
-│       │   │   └── document_manager.py                        # 文档删除、重建、状态管理
+│       │   │   └── lifecycle_manager.py                       # 文档删除、重建、状态管理
 │       │   ├── chunking/                                      # Chunking 模块：文档切分
 │       │   │   └── split.py                                   # 文本切分阶段
 │       │   ├── transform/                                     # Transform 模块：增强处理
@@ -1706,7 +1704,7 @@ RAGMS/                                                         # 项目根目录
 │       │       ├── pipeline.py                                # Storage 主编排
 │       │       ├── vector_upsert.py                           # 向量库 Upsert
 │       │       ├── bm25_indexing.py                           # BM25 索引构建
-│       │       └── image_storage.py                           # 图片文件存储
+│       │       └── image_persistence.py                       # 图片文件落盘编排
 │       ├── libs/                                              # 可插拔抽象层
 │       │   ├── __init__.py                                    # libs 子包初始化文件
 │       │   ├── abstractions/                                  # 抽象基类定义
@@ -1761,6 +1759,8 @@ RAGMS/                                                         # 项目根目录
 │       │   │   ├── repositories/                              # SQLite 仓储实现
 │       │   │   │   ├── documents.py                           # 文档仓储
 │       │   │   │   ├── ingestion_history.py                   # 摄取历史仓储
+│       │   │   │   ├── images.py                              # 图片索引仓储
+│       │   │   │   ├── processing_cache.py                    # 图片描述/增强缓存仓储
 │       │   │   │   ├── evaluations.py                         # 评估结果仓储
 │       │   │   │   └── traces.py                              # Trace 元数据仓储
 │       │   │   └── migrations/                                # SQLite 迁移脚本目录
@@ -1787,10 +1787,6 @@ RAGMS/                                                         # 项目根目录
 │       │   └── dashboard/                                     # 本地 Dashboard 实现
 │       │       ├── __init__.py                                # dashboard 子包初始化文件
 │       │       ├── app.py                                     # Streamlit 应用入口
-│       │       ├── services/                                  # Dashboard 业务服务层
-│       │       │   ├── data_service.py                        # 数据浏览服务
-│       │       │   ├── document_manager.py                    # 文档管理服务
-│       │       │   └── trace_service.py                       # Trace 查询服务
 │       │       ├── components/                                # 通用 UI 组件
 │       │       │   ├── tables.py                              # 表格组件
 │       │       │   ├── charts.py                              # 图表组件
@@ -1799,7 +1795,8 @@ RAGMS/                                                         # 项目根目录
 │       │           ├── system_overview.py                     # 系统总览页
 │       │           ├── data_browser.py                        # 数据浏览器页面
 │       │           ├── ingestion_management.py                # Ingestion 管理页面
-│       │           ├── trace_viewer.py                        # Trace 查看页面
+│       │           ├── ingestion_trace.py                     # Ingestion 追踪页面
+│       │           ├── query_trace.py                         # Query 追踪页面
 │       │           └── evaluation_panel.py                    # 评估面板页面
 │       └── shared/                                            # 通用共享模块
 │           ├── __init__.py                                    # shared 子包初始化文件
@@ -1855,7 +1852,7 @@ RAGMS/                                                         # 项目根目录
 │   │   │   ├── test_pipeline_callbacks.py                     # Pipeline 回调测试
 │   │   │   ├── lifecycle/                                     # 文档生命周期测试
 │   │   │   │   ├── test_document_registry.py                  # 文档注册表测试
-│   │   │   │   └── test_document_manager.py                   # 文档生命周期管理测试
+│   │   │   │   └── test_lifecycle_manager.py                  # 文档生命周期管理测试
 │   │   │   ├── chunking/                                      # Chunking 模块测试
 │   │   │   │   └── test_split.py                              # 文本切分测试
 │   │   │   ├── transform/                                     # Transform 模块测试
@@ -1872,7 +1869,7 @@ RAGMS/                                                         # 项目根目录
 │   │   │       ├── test_pipeline.py                           # Storage 主编排测试
 │   │   │       ├── test_vector_upsert.py                      # 向量库 Upsert 测试
 │   │   │       ├── test_bm25_indexing.py                      # BM25 索引构建测试
-│   │   │       └── test_image_storage.py                      # 图片文件存储测试
+│   │   │       └── test_image_persistence.py                  # 图片文件存储测试
 │   │   ├── mcp_server/                                        # MCP Server 单元测试
 │   │   │   ├── test_protocol_handler.py                       # 协议处理器测试
 │   │   │   └── test_tools_schema.py                           # tool schema 测试
@@ -1882,6 +1879,9 @@ RAGMS/                                                         # 项目根目录
 │   ├── integration/                                           # 集成测试
 │   │   ├── test_bootstrap_smoke.py                            # 工程骨架冒烟测试
 │   │   ├── test_factory_wiring.py                             # 工厂装配集成测试
+│   │   ├── test_ingestion_metadata_bootstrap.py               # SQLite 元数据初始化集成测试
+│   │   ├── test_document_registry_persistence.py              # 文档注册表持久化集成测试
+│   │   ├── test_document_lifecycle_integration.py             # 文档生命周期联动集成测试
 │   │   ├── test_ingestion_pipeline.py                         # 摄取流水线集成测试
 │   │   ├── test_ingestion_pipeline_storage.py                 # 摄取写入存储集成测试
 │   │   ├── test_query_engine.py                               # 查询引擎集成测试
@@ -1895,7 +1895,8 @@ RAGMS/                                                         # 项目根目录
 │   │   ├── test_dashboard_system_overview.py                  # Dashboard 系统总览页测试
 │   │   ├── test_dashboard_data_access.py                      # Dashboard 数据访问集成测试
 │   │   ├── test_dashboard_ingestion_management.py             # Dashboard Ingestion 管理页测试
-│   │   ├── test_dashboard_trace_viewer.py                     # Dashboard Trace 查看页测试
+│   │   ├── test_dashboard_ingestion_trace.py                  # Dashboard Ingestion 追踪页测试
+│   │   ├── test_dashboard_query_trace.py                      # Dashboard Query 追踪页测试
 │   │   └── test_evaluation_runner.py                          # 评估运行器集成测试
 │   ├── e2e/                                                   # 端到端测试
 │   │   ├── test_mcp_stdio_flow.py                             # MCP STDIO 调用链路 E2E 测试
@@ -1911,6 +1912,7 @@ RAGMS/                                                         # 项目根目录
 │   │   └── evaluation/                                        # 评估数据样例
 │   ├── fakes/                                                 # fake provider 与假实现
 │   │   ├── fake_llm.py                                        # 假 LLM 实现
+│   │   ├── fake_vision_llm.py                                 # 假 Vision LLM 实现
 │   │   ├── fake_embedding.py                                  # 假 Embedding 实现
 │   │   ├── fake_reranker.py                                   # 假 Reranker 实现
 │   │   ├── fake_vector_store.py                               # 假 VectorStore 实现
@@ -1941,18 +1943,18 @@ RAGMS/                                                         # 项目根目录
 | `mcp_server/protocol_handler.py` | 处理工具调用的参数解析、校验、响应包装与异常转换。 | 协议解耦、统一响应结构、错误拦截。 |
 | `mcp_server/tool_registry.py` | 维护工具注册表，集中定义哪些能力对外可见。 | 工具声明集中管理、便于扩展和测试。 |
 | `mcp_server/schemas.py` | 定义 MCP 工具入参与出参结构。 | 请求/响应 schema、类型约束、兼容性控制。 |
-| `mcp_server/tools/query.py` | 暴露查询知识库能力，调用 `Query Processor / Hybrid Search / Response Builder`。 | MCP 入参解析、Query Flow 透传、TextContent/ImageContent 输出。 |
-| `mcp_server/tools/ingest.py` | 暴露离线摄取能力，调用 `Ingestion Pipeline`。 | 批量文档受理、增量跳过、强制重建。 |
-| `mcp_server/tools/collections.py` | 提供集合维度的查询与管理能力。 | 集合枚举、状态汇总、基础管理接口。 |
-| `mcp_server/tools/documents.py` | 提供文档查看、摘要查询、状态回溯能力。 | 文档级回溯、与 SQLite 元数据联动。 |
-| `mcp_server/tools/traces.py` | 提供 Trace 检索与详情查询能力。 | 按 `trace_id` 查询、链路可视化数据输出。 |
-| `mcp_server/tools/evaluation.py` | 提供评估任务触发与结果查询能力。 | 评估编排入口、结果结构化输出。 |
+| `mcp_server/tools/query.py` | 暴露 `query_knowledge_hub`，调用 `Query Processor / Hybrid Search / Response Builder`。 | MCP 入参解析、Query Flow 透传、TextContent/ImageContent 输出。 |
+| `mcp_server/tools/ingest.py` | 暴露 `ingest_documents`，调用 `Ingestion Pipeline`。 | 批量文档受理、增量跳过、强制重建。 |
+| `mcp_server/tools/collections.py` | 暴露 `list_collections`。 | 集合枚举、状态汇总、基础管理接口。 |
+| `mcp_server/tools/documents.py` | 暴露 `get_document_summary`。 | 文档级回溯、与 SQLite 元数据联动。 |
+| `mcp_server/tools/traces.py` | 暴露 `get_trace_detail`。 | 按 `trace_id` 查询、链路可视化数据输出。 |
+| `mcp_server/tools/evaluation.py` | 暴露 `evaluate_collection`。 | 评估编排入口、结果结构化输出。 |
 
 #### 5.3.3 `core` 层
 
 | 模块 | 职责 | 关键技术点 |
 |---|---|---|
-| `core/models/` | 定义文档、chunk、检索结果、Trace、评估结果等领域模型。 | 强类型领域建模、跨模块统一数据契约。 |
+| `core/models/` | 定义文档、chunk、检索结果、评估结果、响应对象等领域模型。 | 强类型领域建模、跨模块统一数据契约。 |
 | `core/query_engine/engine.py` | 查询链路主编排器，串联 Query Processor、Hybrid Search、Reranker 与 Response Builder。 | 在线 Query Flow 编排、模块解耦、统一返回结构。 |
 | `core/query_engine/query_processor.py` | 处理用户查询的关键词提取、同义词扩展与 metadata filter 解析。 | Query 预处理、过滤条件解析、输入归一化。 |
 | `core/query_engine/hybrid_search.py` | 统一编排 Dense Retrieval、Sparse Retrieval 与 RRF Fusion。 | 双路检索并行、RRF 融合、Top-M 候选生成。 |
@@ -1962,14 +1964,14 @@ RAGMS/                                                         # 项目根目录
 | `core/query_engine/citation_builder.py` | 从检索结果构建引用信息。 | chunk 溯源、路径/页码映射、引用规范化。 |
 | `core/query_engine/answer_generator.py` | 调用 LLM 生成最终回答。 | 统一 LLM 接口、答案生成、上下文使用控制。 |
 | `core/management/data_service.py` | 为 Dashboard 提供文档列表、Chunk 详情、图片预览等数据读取能力。 | Chroma 元数据查询、图片列表聚合、只读数据服务。 |
-| `core/management/document_manager.py` | 负责文档删除、重建和管理操作。 | Chroma 删除、BM25 索引移除、图片删除、完整性记录清理。 |
+| `core/management/document_admin_service.py` | 负责文档删除、重建和管理操作。 | Chroma 删除、BM25 索引移除、图片删除、完整性记录清理。 |
 | `core/management/trace_service.py` | 提供 Trace 日志读取、分类和详情查询能力。 | 读取 `logs/traces.jsonl`、按 `trace_type` 分类、返回链路详情。 |
 | `core/evaluation/runner.py` | 执行检索/问答评估任务。 | 多评估后端组合、批量运行、结果汇总。 |
 | `core/evaluation/dataset_loader.py` | 加载并标准化评估数据集。 | 数据集 schema 统一、离线评估输入收敛。 |
 | `core/evaluation/report_service.py` | 生成综合评估报告。 | 指标聚合、实验对比、报告落盘。 |
 | `core/evaluation/metrics/` | 实现检索指标与回答质量指标。 | `hit_rate`、`MRR`、`context_precision`、`answer_relevancy` 等。 |
 | `core/trace_collector/trace_manager.py` | 管理一次请求的 Trace 生命周期。 | `trace_id` 生成、阶段注册、异常捕获、最终落盘。 |
-| `core/trace_collector/trace_models.py` | 定义 `QueryTrace`、`IngestionTrace`、`StageTrace` 等结构。 | 统一 Trace 数据契约、结构化日志模型。 |
+| `core/trace_collector/trace_schema.py` | 定义 `QueryTrace`、`IngestionTrace`、`StageTrace` 等结构。 | 统一 Trace 数据契约、结构化日志模型。 |
 | `core/trace_collector/stage_recorder.py` | 记录阶段耗时、输入输出摘要和指标。 | 阶段级打点、指标聚合、失败节点定位。 |
 | `core/trace_collector/trace_utils.py` | 提供摘要裁剪、异常序列化、敏感字段脱敏等能力。 | Trace 安全落盘、日志可读性优化。 |
 
@@ -1981,7 +1983,7 @@ RAGMS/                                                         # 项目根目录
 | `ingestion_pipeline/callbacks.py` | 定义 Pipeline 回调协议与默认钩子。 | before/after stage 回调、进度通知、Trace/日志联动。 |
 | `ingestion_pipeline/file_integrity.py` | 负责 SHA256 指纹计算与“未变更则跳过”逻辑。 | 文件完整性校验、增量摄取、跳过策略。 |
 | `ingestion_pipeline/lifecycle/document_registry.py` | 维护文档登记、状态变更与来源映射。 | 文档注册、状态流转、来源追踪。 |
-| `ingestion_pipeline/lifecycle/document_manager.py` | 负责摄取侧文档删除、重建与生命周期管理。 | 生命周期编排、重建控制、与存储层级联协作。 |
+| `ingestion_pipeline/lifecycle/lifecycle_manager.py` | 负责摄取侧文档删除、重建与生命周期管理。 | 生命周期编排、重建控制、与存储层级联协作。 |
 | `ingestion_pipeline/chunking/split.py` | 承担文档切分与 Chunk 构建。 | Recursive Splitter 接入、`image_refs` 保留、chunk 边界稳定性。 |
 | `ingestion_pipeline/transform/pipeline.py` | 编排 Transform 模块内部各增强步骤。 | 多步骤增强串联、失败隔离、阶段结果落盘。 |
 | `ingestion_pipeline/transform/smart_chunk_builder.py` | 对 Chunk 做智能重组、清洗与去噪。 | 邻近块合并、噪声剔除、上下文修复。 |
@@ -1995,7 +1997,7 @@ RAGMS/                                                         # 项目根目录
 | `ingestion_pipeline/storage/pipeline.py` | 编排摄取结果写入存储。 | 写入顺序控制、失败回滚、幂等保证。 |
 | `ingestion_pipeline/storage/vector_upsert.py` | 负责向量库 Upsert。 | Chroma Upsert、payload 组装、重复写入覆盖。 |
 | `ingestion_pipeline/storage/bm25_indexing.py` | 负责 BM25 索引构建。 | 倒排索引更新、文档级重建、删除同步。 |
-| `ingestion_pipeline/storage/image_storage.py` | 负责图片文件落盘与索引关联。 | 图片路径管理、二进制落盘、与文档生命周期联动。 |
+| `ingestion_pipeline/storage/image_persistence.py` | 负责编排图片文件落盘与索引关联。 | 调用底层图片存储适配器、与文档生命周期联动。 |
 
 #### 5.3.5 `libs` 层
 
@@ -2024,8 +2026,8 @@ RAGMS/                                                         # 项目根目录
 | 模块 | 职责 | 关键技术点 |
 |---|---|---|
 | `storage/sqlite/connection.py` | 管理 SQLite 连接与事务。 | 本地优先、轻量持久化、事务控制。 |
-| `storage/sqlite/schema.py` | 定义文档、摄取历史、评估、Trace 等表结构。 | 元数据建模、可迁移 schema。 |
-| `storage/sqlite/repositories/` | 封装文档、摄取历史、评估结果、Trace 元数据的读写。 | Repository 模式、业务存储解耦。 |
+| `storage/sqlite/schema.py` | 定义文档、摄取历史、图片索引、处理缓存、评估、Trace 等表结构。 | 元数据建模、可迁移 schema、统一元数据收敛。 |
+| `storage/sqlite/repositories/` | 封装文档、摄取历史、图片索引、处理缓存、评估结果、Trace 元数据的读写。 | Repository 模式、业务存储解耦。 |
 | `storage/sqlite/migrations/` | 存放 SQLite 迁移脚本。 | 版本化 schema 管理。 |
 | `storage/vector_store/chroma_client.py` | 封装 Chroma 客户端访问。 | 向量写入、相似度查询、collection 管理。 |
 | `storage/indexes/dense_index.py` | 稠密检索索引访问层。 | Dense Vector Search 封装。 |
@@ -2044,15 +2046,13 @@ RAGMS/                                                         # 项目根目录
 | `observability/metrics/ingestion_metrics.py` | 定义和汇总摄取链路指标。 | 文档数、chunk 数、阶段耗时统计。 |
 | `observability/metrics/query_metrics.py` | 定义和汇总查询链路指标。 | 召回数量、rerank 耗时、总响应耗时。 |
 | `observability/metrics/evaluation_metrics.py` | 定义和汇总评估链路指标。 | 评估结果聚合、实验对比指标。 |
-| `observability/dashboard/app.py` | 本地 Streamlit Dashboard 入口。 | 本地 Web UI、离线可运行。 |
-| `observability/dashboard/services/data_service.py` | 为 Dashboard 的“数据浏览”页面提供只读数据访问。 | 数据聚合、只读服务、与页面逻辑解耦。 |
-| `observability/dashboard/services/document_manager.py` | 为 Dashboard 的“摄取管理”页面提供管理操作入口。 | 删除、重建、状态刷新。 |
-| `observability/dashboard/services/trace_service.py` | 为 Dashboard 的“Trace 查看”页面提供查询能力。 | 读取 `logs/traces.jsonl`、按类型过滤、详情展开。 |
+| `observability/dashboard/app.py` | 本地 Streamlit Dashboard 入口。 | 本地 Web UI、离线可运行、复用 `core/management` 作为唯一业务服务层。 |
 | `observability/dashboard/components/` | 封装通用表格、图表和 Trace 时间线组件。 | 可复用 UI 组件、动态渲染。 |
 | `observability/dashboard/pages/system_overview.py` | 展示系统总览与核心指标。 | 汇总视图、趋势展示。 |
 | `observability/dashboard/pages/data_browser.py` | 浏览集合、文档、chunk 与元数据。 | 数据检索、回溯与过滤。 |
 | `observability/dashboard/pages/ingestion_management.py` | 管理摄取任务与文档状态。 | 任务列表、跳过/失败/重建视图。 |
-| `observability/dashboard/pages/trace_viewer.py` | 展示 Query / Ingestion 两类 Trace 详情。 | 按 `trace_type` 分类、按 `trace_id` 查看链路。 |
+| `observability/dashboard/pages/ingestion_trace.py` | 展示 Ingestion Trace 详情。 | 按 `trace_id` 查看摄取阶段链路、状态流转与失败节点。 |
+| `observability/dashboard/pages/query_trace.py` | 展示 Query Trace 详情。 | 查看 Query 预处理、召回、融合、重排与生成链路，并支持 trace 对比。 |
 | `observability/dashboard/pages/evaluation_panel.py` | 展示评估结果与实验对比。 | 多后端评估结果聚合、case-by-case 分析。 |
 
 #### 5.3.8 `shared` 层
@@ -2108,6 +2108,12 @@ RAGMS/                                                         # 项目根目录
 ┌─────────────────┐
 │    Storage      │  Vector Upsert + BM25 Index + 图片文件存储
 │  (Persist)      │
+└────────┬────────┘
+         │ 持久化成功
+         ▼
+┌─────────────────┐
+│ Lifecycle Commit│  ingestion_history + 文档状态 + Trace 提交
+│   (Finalize)    │
 └─────────────────┘
 ```
 
@@ -2214,12 +2220,12 @@ mcp:
   transport: stdio
   server_name: ragms-mcp-server
   tools:
-    - query
-    - ingest
-    - collections
-    - documents
-    - traces
-    - evaluation
+    - query_knowledge_hub
+    - ingest_documents
+    - list_collections
+    - get_document_summary
+    - get_trace_detail
+    - evaluate_collection
 
 models:
   llm:
@@ -2341,15 +2347,12 @@ dashboard:
   enabled: true
   title: RAGMS Local Dashboard
   auto_refresh: true
-  services:
-    data_service: true
-    document_manager: true
-    trace_service: true
   pages:
     - system_overview
     - data_browser
     - ingestion_management
-    - trace_viewer
+    - ingestion_trace
+    - query_trace
     - evaluation_panel
 ```
 
@@ -2357,9 +2360,10 @@ dashboard:
 
 - `ingestion.file_integrity` 对应 5.4.1 中的 `File Integrity (SHA256)` 节点，控制是否跳过未变更文件。
 - `ingestion.loader / splitter / transform / embedding / upsert` 直接映射离线摄取流的五个核心阶段。
+- `storage.sqlite.path` 是统一元数据数据库，承载 `documents`、`ingestion_history`、`images`、`processing_cache`、`evaluations` 与 `traces` 等结构化状态。
 - `query.processor / hybrid_search / reranker / response_builder` 直接映射 5.4.2 中的在线查询链路。
 - `storage.traces.file` 统一使用 `logs/traces.jsonl`，与 5.4.3 中 `TraceService` 的读取路径保持一致。
-- `dashboard.services` 对应管理操作流中的 `DataService`、`DocumentManager`、`TraceService`。
+- Dashboard 页面直接复用 `core/management` 作为业务服务层，避免在 UI 层重复定义第二套同名服务。
 - 所有 provider 与 backend 均通过配置切换，业务代码不直接写死具体实现。
 
 ## 6. 项目排期
@@ -2430,22 +2434,22 @@ dashboard:
 ##### A4 建立 pytest 测试基座与 fake/fixture 机制
 
 - 目标：建立单元/集成/E2E 三层测试目录、公共 fixture 与 fake provider。
-- 修改文件：`pytest.ini`、`tests/conftest.py`、`tests/fakes/fake_llm.py`、`tests/fakes/fake_embedding.py`、`tests/fakes/fake_vector_store.py`
-- 实现类/函数：`FakeLLM`、`FakeEmbedding`、`FakeVectorStore`
-- 验收标准：测试可使用 fake provider 脱离真实外部依赖运行。
+- 修改文件：`pytest.ini`、`tests/conftest.py`、`tests/fakes/fake_llm.py`、`tests/fakes/fake_vision_llm.py`、`tests/fakes/fake_embedding.py`、`tests/fakes/fake_vector_store.py`、`tests/fakes/fake_reranker.py`、`tests/fakes/fake_evaluator.py`
+- 实现类/函数：`FakeLLM`、`FakeVisionLLM`、`FakeEmbedding`、`FakeVectorStore`、`FakeReranker`、`FakeEvaluator`
+- 验收标准：测试可使用 fake provider 脱离真实外部依赖运行；后续 Reranker / Evaluator / Vision LLM 相关模块也可在不依赖真实模型的前提下执行 TDD。
 - 测试方法：`pytest tests/unit -q`
 
 ##### A5 建立本地启动脚本与最小冒烟测试
 
 - 目标：提供最小可运行的本地入口，验证工程骨架可执行，并为后续离线摄取 CLI 预留稳定入口。
-- 修改文件：`scripts/query_cli.py`、`scripts/run_dashboard.py`、`scripts/ingest_documents.py`、`tests/integration/test_bootstrap_smoke.py`
-- 实现类/函数：`run_cli()`、`run_dashboard()`、`ingest_documents_main()`
-- 验收标准：CLI、Dashboard、MCP Server、Ingestion CLI 启动脚本均可被调用；冒烟测试通过。
+- 修改文件：`scripts/query_cli.py`、`scripts/run_dashboard.py`、`scripts/run_mcp_server.py`、`scripts/ingest_documents.py`、`tests/integration/test_bootstrap_smoke.py`
+- 实现类/函数：`run_cli()`、`run_dashboard()`、`run_mcp_server_main()`、`ingest_documents_main()`
+- 验收标准：CLI、Dashboard、MCP Server、Ingestion CLI 启动脚本均可被调用；`test_bootstrap_smoke.py` 对四类入口均完成最小启动验证。
 - 测试方法：`pytest tests/integration/test_bootstrap_smoke.py`
 
 #### 阶段 B：实现核心抽象与工厂体系
 
-目标：实现 `libs` 可插拔层，确保 Core / Ingestion 不仅“可编译”，还可在真实环境跑通。
+目标：实现 `libs` 可插拔层与工厂装配体系，确保默认 provider 与运行时容器可在真实环境完成实例化，并为后续 Core / Ingestion 提供稳定依赖基础。
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
@@ -2455,7 +2459,7 @@ dashboard:
 | B4.1 | 落地 MarkItDown Loader provider | [ ] |  |  |
 | B4.2 | 落地 Recursive Character Splitter provider | [ ] |  |  |
 | B4.3 | 落地 OpenAI LLM provider | [ ] |  |  |
-| B4.4 | 落地 Qwen LLM provider | [ ] |  |  |
+| B4.4 | 落地 Qwen / DeepSeek LLM providers | [ ] |  |  |
 | B4.5 | 落地 GPT-4o Vision provider | [ ] |  |  |
 | B4.6 | 落地 Qwen-VL provider | [ ] |  |  |
 | B4.7 | 落地 OpenAI Embedding provider | [ ] |  |  |
@@ -2476,18 +2480,18 @@ dashboard:
 ##### B2 实现 Loader / Splitter / VectorStore 工厂
 
 - 目标：实现文档加载、切分、向量存储三类工厂。
-- 修改文件：`src/ragms/libs/factories/loader_factory.py`、`src/ragms/libs/factories/splitter_factory.py`、`src/ragms/libs/factories/vector_store_factory.py`、`tests/unit/libs/test_loader_factory.py`
+- 修改文件：`src/ragms/libs/factories/loader_factory.py`、`src/ragms/libs/factories/splitter_factory.py`、`src/ragms/libs/factories/vector_store_factory.py`、`tests/unit/libs/test_loader_factory.py`、`tests/unit/libs/test_splitter_factory.py`、`tests/unit/libs/test_vector_store_factory.py`
 - 实现类/函数：`LoaderFactory.create()`、`SplitterFactory.create()`、`VectorStoreFactory.create()`
 - 验收标准：可根据配置正确返回默认实现；未知 provider 抛出明确异常。
-- 测试方法：`pytest tests/unit/libs/test_loader_factory.py tests/unit/libs/test_vector_store_factory.py`
+- 测试方法：`pytest tests/unit/libs/test_loader_factory.py tests/unit/libs/test_splitter_factory.py tests/unit/libs/test_vector_store_factory.py`
 
 ##### B3 实现 LLM / Vision LLM / Embedding / Reranker 工厂
 
 - 目标：实现模型侧四类工厂并支持配置切换。
-- 修改文件：`src/ragms/libs/factories/llm_factory.py`、`src/ragms/libs/factories/vision_llm_factory.py`、`src/ragms/libs/factories/embedding_factory.py`、`src/ragms/libs/factories/reranker_factory.py`、`tests/unit/libs/test_llm_factory.py`、`tests/unit/libs/test_vision_llm_factory.py`
+- 修改文件：`src/ragms/libs/factories/llm_factory.py`、`src/ragms/libs/factories/vision_llm_factory.py`、`src/ragms/libs/factories/embedding_factory.py`、`src/ragms/libs/factories/reranker_factory.py`、`tests/unit/libs/test_llm_factory.py`、`tests/unit/libs/test_vision_llm_factory.py`、`tests/unit/libs/test_embedding_factory.py`、`tests/unit/libs/test_reranker_factory.py`
 - 实现类/函数：`LLMFactory.create()`、`VisionLLMFactory.create()`、`EmbeddingFactory.create()`、`RerankerFactory.create()`
 - 验收标准：模型 provider 可按配置实例化；Vision LLM 可按文档语言或部署环境切换；配置缺失与未知类型可被正确拦截。
-- 测试方法：`pytest tests/unit/libs/test_llm_factory.py tests/unit/libs/test_vision_llm_factory.py tests/unit/libs/test_embedding_factory.py`
+- 测试方法：`pytest tests/unit/libs/test_llm_factory.py tests/unit/libs/test_vision_llm_factory.py tests/unit/libs/test_embedding_factory.py tests/unit/libs/test_reranker_factory.py`
 
 ##### B4.1 落地 MarkItDown Loader provider
 
@@ -2513,13 +2517,13 @@ dashboard:
 - 验收标准：可根据配置完成同步生成与流式输出；鉴权缺失、模型名非法与上游响应异常可被正确处理。
 - 测试方法：`pytest tests/unit/libs/providers/test_openai_llm.py`
 
-##### B4.4 落地 Qwen LLM provider
+##### B4.4 落地 Qwen / DeepSeek LLM providers
 
-- 目标：提供 Qwen 文本大模型实现，支撑国内部署或中文优先场景下的文本生成能力。
-- 修改文件：`src/ragms/libs/providers/llm/qwen_llm.py`、`tests/unit/libs/providers/test_qwen_llm.py`
-- 实现类/函数：`QwenLLM.generate()`、`QwenLLM.stream()`
-- 验收标准：可根据配置完成同步生成与流式输出；兼容 OpenAI 风格网关参数；请求失败与限流场景行为明确。
-- 测试方法：`pytest tests/unit/libs/providers/test_qwen_llm.py`
+- 目标：提供 Qwen 与 DeepSeek 文本大模型实现，支撑国内部署、中文优先和兼容 OpenAI 风格网关的文本生成能力。
+- 修改文件：`src/ragms/libs/providers/llm/qwen_llm.py`、`src/ragms/libs/providers/llm/deepseek_llm.py`、`tests/unit/libs/providers/test_qwen_llm.py`、`tests/unit/libs/providers/test_deepseek_llm.py`
+- 实现类/函数：`QwenLLM.generate()`、`QwenLLM.stream()`、`DeepSeekLLM.generate()`、`DeepSeekLLM.stream()`
+- 验收标准：两类 provider 都可根据配置完成同步生成与流式输出；兼容 OpenAI 风格网关参数；请求失败与限流场景行为明确。
+- 测试方法：`pytest tests/unit/libs/providers/test_qwen_llm.py tests/unit/libs/providers/test_deepseek_llm.py`
 
 ##### B4.5 落地 GPT-4o Vision provider
 
@@ -2579,10 +2583,10 @@ dashboard:
 
 ##### B6 完成工厂装配集成冒烟
 
-- 目标：验证 `runtime/container.py` 能通过真实工厂创建默认组件与摄取主编排对象。
+- 目标：验证 `runtime/container.py` 能通过真实工厂创建阶段 B 已落地的默认组件，并完成基础依赖装配校验。
 - 修改文件：`src/ragms/runtime/container.py`、`tests/integration/test_factory_wiring.py`
 - 实现类/函数：`build_container()` 集成路径
-- 验收标准：默认配置下可成功装配 Loader、Splitter、VisionLLM、Embedding、VectorStore、LLM、Evaluator、IngestionPipeline、PipelineCallback、DocumentRegistry、IngestionDocumentManager。
+- 验收标准：默认配置下可成功装配 Loader、Splitter、LLM、VisionLLM、Embedding、Reranker、VectorStore、Evaluator 等默认组件；容器能返回对应实例并对缺失配置或未知 provider 做统一异常收敛。
 - 测试方法：`pytest tests/integration/test_factory_wiring.py`
 
 #### 阶段 C：Ingestion Pipeline
@@ -2592,7 +2596,7 @@ dashboard:
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
 | C1 | 实现 Pipeline 主流程与回调协议 | [ ] |  |  |
-| C2 | 实现 File Integrity 与摄取历史存储 | [ ] |  |  |
+| C2 | 实现 SQLite 元数据底座、File Integrity 与摄取历史存储 | [ ] |  |  |
 | C3 | 实现文档注册表与状态流转 | [ ] |  |  |
 | C4 | 实现文档生命周期管理 | [ ] |  |  |
 | C5 | 实现 Chunking 切分主流程 | [ ] |  |  |
@@ -2614,29 +2618,29 @@ dashboard:
 - 验收标准：主流程可串联各子模块；回调在阶段边界被触发；失败可返回统一错误上下文。
 - 测试方法：`pytest tests/unit/ingestion_pipeline/test_pipeline_callbacks.py`
 
-##### C2 实现 File Integrity 与摄取历史存储
+##### C2 实现 SQLite 元数据底座、File Integrity 与摄取历史存储
 
-- 目标：支持 SHA256 增量判断和未变更跳过。
-- 修改文件：`src/ragms/ingestion_pipeline/file_integrity.py`、`src/ragms/storage/sqlite/repositories/ingestion_history.py`、`tests/unit/ingestion_pipeline/test_file_integrity.py`
-- 实现类/函数：`FileIntegrity.compute_sha256()`、`FileIntegrity.should_skip()`、`IngestionHistoryRepository`
-- 验收标准：相同文件内容重复摄取会被跳过；内容变化会触发重新处理。
-- 测试方法：`pytest tests/unit/ingestion_pipeline/test_file_integrity.py`
+- 目标：建立摄取链路所需的 SQLite 元数据底座，并支持 SHA256 增量判断和未变更跳过。
+- 修改文件：`src/ragms/storage/sqlite/connection.py`、`src/ragms/storage/sqlite/schema.py`、`src/ragms/storage/sqlite/migrations/`、`src/ragms/storage/sqlite/repositories/ingestion_history.py`、`src/ragms/ingestion_pipeline/file_integrity.py`、`tests/unit/ingestion_pipeline/test_file_integrity.py`、`tests/integration/test_ingestion_metadata_bootstrap.py`
+- 实现类/函数：`create_sqlite_connection()`、`initialize_metadata_schema()`、`run_sqlite_migrations()`、`FileIntegrity.compute_sha256()`、`FileIntegrity.should_skip()`、`IngestionHistoryRepository`
+- 验收标准：默认配置下可初始化 `data/metadata/ragms.db` 及其基础 schema；`ingestion_history` 可读写；相同文件内容重复摄取会被跳过；内容变化会触发重新处理。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/test_file_integrity.py tests/integration/test_ingestion_metadata_bootstrap.py`
 
 ##### C3 实现文档注册表与状态流转
 
-- 目标：建立摄取文档注册表，记录状态、来源与当前处理阶段。
-- 修改文件：`src/ragms/ingestion_pipeline/lifecycle/document_registry.py`、`tests/unit/ingestion_pipeline/lifecycle/test_document_registry.py`
-- 实现类/函数：`DocumentRegistry.register()`、`DocumentRegistry.update_status()`
-- 验收标准：文档可完成注册、状态迁移与来源查询；非法状态跳转会被拦截。
-- 测试方法：`pytest tests/unit/ingestion_pipeline/lifecycle/test_document_registry.py`
+- 目标：建立以 SQLite `documents` 元数据表为落点的摄取文档注册表，记录状态、来源、哈希、时间戳与当前处理阶段。
+- 修改文件：`src/ragms/ingestion_pipeline/lifecycle/document_registry.py`、`src/ragms/storage/sqlite/repositories/documents.py`、`tests/unit/ingestion_pipeline/lifecycle/test_document_registry.py`、`tests/integration/test_document_registry_persistence.py`
+- 实现类/函数：`DocumentRegistry.register()`、`DocumentRegistry.update_status()`、`DocumentsRepository`
+- 验收标准：文档可完成注册、状态迁移与来源查询；注册信息会持久化到 `documents` 表；非法状态跳转会被拦截；重新启动后可恢复最近状态。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/lifecycle/test_document_registry.py tests/integration/test_document_registry_persistence.py`
 
 ##### C4 实现文档生命周期管理
 
-- 目标：实现摄取侧文档重建、删除与状态恢复编排。
-- 修改文件：`src/ragms/ingestion_pipeline/lifecycle/document_manager.py`、`tests/unit/ingestion_pipeline/lifecycle/test_document_manager.py`
+- 目标：实现摄取侧文档重建、删除与状态恢复编排，并与 `documents` / `ingestion_history` / 图片索引等持久化状态联动。
+- 修改文件：`src/ragms/ingestion_pipeline/lifecycle/lifecycle_manager.py`、`tests/unit/ingestion_pipeline/lifecycle/test_lifecycle_manager.py`、`tests/integration/test_document_lifecycle_integration.py`
 - 实现类/函数：`IngestionDocumentManager.rebuild()`、`IngestionDocumentManager.delete()`
-- 验收标准：文档可触发重建与删除；生命周期操作能驱动注册表与存储层联动。
-- 测试方法：`pytest tests/unit/ingestion_pipeline/lifecycle/test_document_manager.py`
+- 验收标准：文档可触发重建与删除；生命周期操作能驱动注册表、`documents` 元数据、`ingestion_history` 与存储层联动，保证删除/重建后状态一致。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/lifecycle/test_lifecycle_manager.py tests/integration/test_document_lifecycle_integration.py`
 
 ##### C5 实现 Chunking 切分主流程
 
@@ -2672,10 +2676,10 @@ dashboard:
 
 ##### C9 实现图片描述生成
 
-- 目标：调用 Vision LLM 为图片生成 caption 并注入到关联 chunk。
-- 修改文件：`src/ragms/ingestion_pipeline/transform/image_captioning.py`、`tests/unit/ingestion_pipeline/transform/test_image_captioning.py`
-- 实现类/函数：`inject_image_caption()`、`generate_image_caption()`
-- 验收标准：单图、多图、无图场景均可处理；Vision LLM 不可用时具备明确降级策略。
+- 目标：调用 Vision LLM 为图片生成 caption 并注入到关联 chunk，同时支持基于 `processing_cache` 的幂等复用。
+- 修改文件：`src/ragms/ingestion_pipeline/transform/image_captioning.py`、`src/ragms/storage/sqlite/repositories/processing_cache.py`、`tests/unit/ingestion_pipeline/transform/test_image_captioning.py`
+- 实现类/函数：`inject_image_caption()`、`generate_image_caption()`、`ProcessingCacheRepository`
+- 验收标准：单图、多图、无图场景均可处理；相同图片内容且 Prompt 版本未变化时可复用缓存描述；Vision LLM 不可用时具备明确降级策略。
 - 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_image_captioning.py`
 
 ##### C10 实现 Dense Embedding 编码
@@ -2704,11 +2708,11 @@ dashboard:
 
 ##### C13 实现 BM25 索引构建与图片文件存储
 
-- 目标：完成 BM25 索引更新与图片文件落盘。
-- 修改文件：`src/ragms/ingestion_pipeline/storage/bm25_indexing.py`、`src/ragms/ingestion_pipeline/storage/image_storage.py`、`src/ragms/storage/indexes/bm25_indexer.py`、`src/ragms/storage/images/image_storage.py`、`tests/unit/ingestion_pipeline/storage/test_bm25_indexing.py`、`tests/unit/ingestion_pipeline/storage/test_image_storage.py`
-- 实现类/函数：`BM25StorageWriter.index()`、`ImageStorageWriter.save_all()`、`BM25Indexer.index_document()`
-- 验收标准：BM25 索引可增量更新；图片可稳定落盘并建立文档关联。
-- 测试方法：`pytest tests/unit/ingestion_pipeline/storage/test_bm25_indexing.py tests/unit/ingestion_pipeline/storage/test_image_storage.py`
+- 目标：完成 BM25 索引更新、图片文件落盘与 `images` 索引表写入。
+- 修改文件：`src/ragms/ingestion_pipeline/storage/bm25_indexing.py`、`src/ragms/ingestion_pipeline/storage/image_persistence.py`、`src/ragms/storage/indexes/bm25_indexer.py`、`src/ragms/storage/images/image_storage.py`、`src/ragms/storage/sqlite/repositories/images.py`、`tests/unit/ingestion_pipeline/storage/test_bm25_indexing.py`、`tests/unit/ingestion_pipeline/storage/test_image_persistence.py`
+- 实现类/函数：`BM25StorageWriter.index()`、`ImageStorageWriter.save_all()`、`BM25Indexer.index_document()`、`ImagesRepository`
+- 验收标准：BM25 索引可增量更新；图片可稳定落盘、写入 `images` 索引表并与文档/chunk 建立查询关联。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/storage/test_bm25_indexing.py tests/unit/ingestion_pipeline/storage/test_image_persistence.py`
 
 ##### C14 打通 Ingestion Pipeline 与 CLI 集成链路
 
@@ -2802,7 +2806,7 @@ dashboard:
 
 - 目标：暴露集合和文档管理类工具。
 - 修改文件：`src/ragms/mcp_server/tools/collections.py`、`src/ragms/mcp_server/tools/documents.py`
-- 实现类/函数：`handle_list_collections()`、`handle_get_document()`
+- 实现类/函数：`handle_list_collections()`、`handle_get_document_summary()`
 - 验收标准：可返回集合列表、文档摘要、文档状态。
 - 测试方法：`pytest tests/integration/test_mcp_server_documents.py`
 
@@ -2810,7 +2814,7 @@ dashboard:
 
 - 目标：暴露 Trace 查询和评估结果查询/触发工具。
 - 修改文件：`src/ragms/mcp_server/tools/traces.py`、`src/ragms/mcp_server/tools/evaluation.py`
-- 实现类/函数：`handle_get_trace()`、`handle_run_evaluation()`
+- 实现类/函数：`handle_get_trace_detail()`、`handle_evaluate_collection()`
 - 验收标准：工具可按 `trace_id` 返回链路详情；评估可被远程触发。
 - 测试方法：`pytest tests/integration/test_mcp_server_trace_eval.py`
 
@@ -2837,7 +2841,7 @@ dashboard:
 ##### F1 实现 Trace 模型与 TraceManager
 
 - 目标：定义 QueryTrace / IngestionTrace / StageTrace 以及 TraceManager。
-- 修改文件：`src/ragms/core/trace_collector/trace_models.py`、`src/ragms/core/trace_collector/trace_manager.py`
+- 修改文件：`src/ragms/core/trace_collector/trace_schema.py`、`src/ragms/core/trace_collector/trace_manager.py`
 - 实现类/函数：`TraceManager.start_trace()`、`TraceManager.finish_trace()`
 - 验收标准：Trace 生命周期完整；阶段可注册与收敛。
 - 测试方法：`pytest tests/unit/core/trace_collector/test_trace_manager.py`
@@ -2869,7 +2873,7 @@ dashboard:
 ##### F5 增加进度回调与双链路集成测试
 
 - 目标：为 Ingestion / Dashboard 增加进度回调，并完成双链路 Trace 集成验证。
-- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/observability/dashboard/services/trace_service.py`
+- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/core/management/trace_service.py`
 - 实现类/函数：`on_progress`、`TraceService.list_traces()`
 - 验收标准：摄取过程可实时回传进度；Dashboard 可按类型读取 Trace。
 - 测试方法：`pytest tests/integration/test_trace_write_and_read.py`
@@ -2884,7 +2888,7 @@ dashboard:
 | G2 | 实现系统总览页 | [ ] |  |  |
 | G3 | 实现数据浏览器页 | [ ] |  |  |
 | G4 | 实现 Ingestion 管理页 | [ ] |  |  |
-| G5 | 实现 Trace 查看页 | [ ] |  |  |
+| G5 | 实现 Ingestion / Query 追踪页 | [ ] |  |  |
 | G6 | 实现评估面板页与 Dashboard 冒烟测试 | [ ] |  |  |
 
 ##### G1 建立 Dashboard 应用壳与通用组件
@@ -2906,7 +2910,7 @@ dashboard:
 ##### G3 实现数据浏览器页
 
 - 目标：展示文档列表、chunk 详情、图片预览与元数据过滤。
-- 修改文件：`src/ragms/observability/dashboard/pages/data_browser.py`、`src/ragms/observability/dashboard/services/data_service.py`
+- 修改文件：`src/ragms/observability/dashboard/pages/data_browser.py`、`src/ragms/core/management/data_service.py`
 - 实现类/函数：`render_data_browser()`、`DataService.list_documents()`
 - 验收标准：文档、chunk、图片均可浏览和回溯。
 - 测试方法：`pytest tests/integration/test_dashboard_data_access.py`
@@ -2914,18 +2918,18 @@ dashboard:
 ##### G4 实现 Ingestion 管理页
 
 - 目标：支持触发摄取、查看进度、删除文档、重建文档。
-- 修改文件：`src/ragms/observability/dashboard/pages/ingestion_management.py`、`src/ragms/observability/dashboard/services/document_manager.py`
-- 实现类/函数：`render_ingestion_management()`、`DocumentManager.delete_document()`
+- 修改文件：`src/ragms/observability/dashboard/pages/ingestion_management.py`、`src/ragms/core/management/document_admin_service.py`
+- 实现类/函数：`render_ingestion_management()`、`DocumentAdminService.delete_document()`
 - 验收标准：页面可触发摄取与删除操作，并刷新状态。
 - 测试方法：`pytest tests/integration/test_dashboard_ingestion_management.py`
 
-##### G5 实现 Trace 查看页
+##### G5 实现 Ingestion / Query 追踪页
 
-- 目标：支持查看 Query / Ingestion 两类 Trace。
-- 修改文件：`src/ragms/observability/dashboard/pages/trace_viewer.py`、`src/ragms/observability/dashboard/services/trace_service.py`
-- 实现类/函数：`render_trace_viewer()`、`TraceService.get_trace_detail()`
-- 验收标准：可按 `trace_type`、`trace_id` 检索并展示完整链路。
-- 测试方法：`pytest tests/integration/test_dashboard_trace_viewer.py`
+- 目标：分别支持查看 Query Trace 与 Ingestion Trace 两类链路。
+- 修改文件：`src/ragms/observability/dashboard/pages/ingestion_trace.py`、`src/ragms/observability/dashboard/pages/query_trace.py`、`src/ragms/core/management/trace_service.py`
+- 实现类/函数：`render_ingestion_trace()`、`render_query_trace()`、`TraceService.get_trace_detail()`
+- 验收标准：可按 `trace_id` 展示完整链路，并按页面区分摄取与查询视图。
+- 测试方法：`pytest tests/integration/test_dashboard_ingestion_trace.py tests/integration/test_dashboard_query_trace.py`
 
 ##### G6 实现评估面板页与 Dashboard 冒烟测试
 
