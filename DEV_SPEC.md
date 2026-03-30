@@ -1,6 +1,6 @@
 # DEV_SPEC
 
-Version: `0.0.11`
+Version: `1.0.0`
 
 ## 目录
 
@@ -867,12 +867,13 @@ evaluation:
 
 #### 3.4.2 追踪数据结构
 
-系统定义两类 Trace 记录，分别覆盖查询与摄取两条链路：
+系统定义三类 Trace 记录，分别覆盖查询、摄取与评估三条主链路：
 
 - `QueryTrace`：记录一次查询从 Query Rewrite、Hybrid Retrieval、Rerank、Prompt Assemble 到 Answer Generation 的完整过程。
 - `IngestionTrace`：记录一次摄取从文件发现、Loader、Splitter、Transform、Embedding、Upsert 到状态提交的完整过程。
+- `EvaluationTrace`：记录一次评估从数据集加载、样本装配、Evaluator 执行、指标聚合到报告落盘的完整过程。
 
-两类 Trace 都必须共享统一的顶层结构，以便 Dashboard 统一读取和过滤。Trace 的持久化粒度为“单次请求一条完整记录”，阶段详情以内嵌 `stages` 列表方式保存，而不是将每个阶段拆成独立日志行。
+三类 Trace 都必须共享统一的顶层结构，以便 Dashboard 统一读取和过滤。Trace 的持久化粒度为“单次请求一条完整记录”，阶段详情以内嵌 `stages` 列表方式保存，而不是将每个阶段拆成独立日志行。
 
 **A. Query Trace（查询追踪）**
 
@@ -933,6 +934,36 @@ evaluation:
 - `total_chunks`：最终存储的 chunk 数量
 - `total_images`：处理的图片数量
 - `skipped`：跳过的文件/chunk 数（已存在、未变更等）
+- `error`：异常信息（若有）
+
+**C. Evaluation Trace（评估追踪）**
+
+每次评估运行生成唯一的 `trace_id`，并与最终的 `run_id` 关联，记录从数据集加载到评估报告产出的全过程：
+
+**基础信息**：
+- `trace_id`：评估请求唯一标识
+- `trace_type`：`"evaluation"`
+- `run_id`：评估运行标识
+- `start_time` / `end_time` / `duration_ms`：评估开始时间、结束时间与总耗时
+- `collection`：被评估的知识库集合
+- `dataset_version`：评估数据集版本
+- `backends`：启用的 evaluator 列表
+- `status`：本次评估状态
+
+**各阶段详情 (Stages)**：
+
+| 阶段 | 记录内容 |
+|-----|---------|
+| **Dataset Load** | 数据集名称、版本、样本数、过滤标签、耗时 |
+| **Sample Build** | query / ground_truth / citations / trace 关联装配情况、耗时 |
+| **Evaluator Execute** | 启用的 evaluator、成功/失败后端、降级信息、耗时 |
+| **Metrics Aggregate** | retrieval / answer 指标摘要、baseline 差异、quality gate 判定、耗时 |
+| **Report Persist** | 报告路径、SQLite 写入状态、`run_id`、耗时 |
+
+**汇总指标**：
+- `metrics_summary`：本次运行的关键指标摘要
+- `quality_gate_status`：质量门槛通过/失败状态
+- `baseline_delta`：相对 baseline 的变化摘要
 - `error`：异常信息（若有）
 
 #### 3.4.3 技术方案：结构化日志 + 本地 Web Dashboard
@@ -1069,8 +1100,9 @@ Dashboard 与 Trace 的数据关系如下：
 
 - Dashboard 的 `Ingestion追踪` 页面直接消费 `IngestionTrace`，按 `trace_id` 渲染每个阶段的状态、耗时与错误信息。
 - Dashboard 的 `Query追踪` 页面直接消费 `QueryTrace`，展示召回数量、融合结果、rerank 耗时、答案摘要等核心字段。
-- `系统总览` 与 `评估面板` 对 Trace 数据做聚合统计，形成趋势图、分布图和策略对比图。
+- `系统总览` 与 `评估面板` 对 Query / Ingestion / Evaluation Trace 以及评估报告做聚合统计，形成趋势图、分布图和策略对比图。
 - `数据浏览器` 与 `Ingestion管理` 会将 Trace 与 SQLite / Chroma 中的文档实体关联起来，实现“从文档跳到追踪”与“从追踪回到文档”的双向回溯。
+- `评估面板` 会将 `EvaluationTrace` 与报告明细关联起来，实现“从评估报告回看 trace / config_snapshot / baseline 差异”的闭环。
 
 Dashboard 设计要求：
 
@@ -1536,7 +1568,7 @@ E2E 测试需要重点回答以下问题：
 | - Dense Embedding + BM25 Indexing -> Upsert(Storage)                                                                  |
 |                                                                                                                       |
 | Management Flow                                                                                                       |
-| - DataService -> DocumentManager -> TraceService                                                                       |
+| - DataService -> DocumentAdminService -> TraceService -> ReportService(Read Only)                                     |
 |                                                                                                                       |
 | Trace Collector                                                                                                       |
 | - trace context -> stage recorder -> metrics aggregator -> error capture -> trace flush                              |
@@ -1589,7 +1621,7 @@ RAGMS/                                                         # 项目根目录
 │   ├── ingest_documents.py                                    # 批量执行文档摄取的脚本
 │   ├── query_cli.py                                           # 本地命令行查询入口
 │   ├── run_evaluation.py                                      # 执行评估任务的脚本
-│   └── run_acceptance.py                                      # 执行全链路验收的脚本
+│   └── run_acceptance.py                                      # 执行一键全链路验收与交付前检查的脚本
 ├── data/                                                      # 本地数据目录
 │   ├── raw/                                                   # 原始输入数据
 │   │   ├── documents/                                         # 待摄取原始文档
@@ -1613,7 +1645,7 @@ RAGMS/                                                         # 项目根目录
 │   └── tmp/                                                   # 临时文件目录
 ├── logs/                                                      # 日志输出目录
 │   ├── app/                                                   # 应用通用日志
-│   ├── traces.jsonl                                           # Query / Ingestion 统一 Trace 日志文件
+│   ├── traces.jsonl                                           # Query / Ingestion / Evaluation 统一 Trace 日志文件
 │   └── dashboard/                                             # Dashboard 运行日志
 ├── src/                                                       # 源代码主目录
 │   └── ragms/                                                 # 项目主 Python 包
@@ -1812,6 +1844,7 @@ RAGMS/                                                         # 项目根目录
 │   ├── unit/                                                  # 单元测试
 │   │   ├── runtime/                                           # runtime 层单元测试
 │   │   │   ├── test_config.py                                 # 配置模块测试
+│   │   │   ├── test_settings_models.py                        # 配置模型校验测试
 │   │   │   └── test_container.py                              # 容器装配测试
 │   │   ├── libs/                                              # 抽象层与工厂层单元测试
 │   │   │   ├── test_abstractions.py                           # 抽象基类契约测试
@@ -1822,6 +1855,8 @@ RAGMS/                                                         # 项目根目录
 │   │   │   ├── test_vector_store_factory.py                   # VectorStore 工厂测试
 │   │   │   ├── test_evaluator_factory.py                      # Evaluator 工厂测试
 │   │   │   ├── test_ragas_evaluator.py                        # Ragas 评估器测试
+│   │   │   ├── test_deepeval_evaluator.py                     # DeepEval 评估器测试
+│   │   │   ├── test_custom_metrics_evaluator.py               # 自定义指标评估器测试
 │   │   │   ├── providers/                                     # provider 层单元测试
 │   │   │   │   ├── test_markitdown_loader.py                  # MarkItDown Loader 测试
 │   │   │   │   ├── test_recursive_character_splitter.py       # Recursive Splitter 测试
@@ -1850,7 +1885,8 @@ RAGMS/                                                         # 项目根目录
 │   │   │   ├── evaluation/                                    # 评估模块单元测试
 │   │   │   │   ├── test_dataset_loader.py                     # 评估数据集加载测试
 │   │   │   │   ├── test_composite_evaluator.py                # 组合评估器测试
-│   │   │   │   └── test_metrics.py                            # 指标计算测试
+│   │   │   │   ├── test_retrieval_metrics.py                  # 检索指标计算测试
+│   │   │   │   └── test_answer_metrics.py                     # 回答指标计算测试
 │   │   │   └── trace_collector/                               # Trace 模块单元测试
 │   │   │       ├── test_trace_manager.py                      # Trace 管理器测试
 │   │   │       └── test_trace_utils.py                        # Trace 工具测试
@@ -1910,20 +1946,23 @@ RAGMS/                                                         # 项目根目录
 │   │   ├── test_trace_write_and_read.py                       # Trace 写入与读取集成测试
 │   │   ├── test_ingestion_trace_logging.py                    # Ingestion Trace 打点集成测试
 │   │   ├── test_query_trace_logging.py                        # Query Trace 打点集成测试
+│   │   ├── test_evaluation_trace_logging.py                   # Evaluation Trace 打点集成测试
 │   │   ├── test_dashboard_shell.py                            # Dashboard 应用壳集成测试
 │   │   ├── test_dashboard_system_overview.py                  # Dashboard 系统总览页测试
 │   │   ├── test_dashboard_data_access.py                      # Dashboard 数据访问集成测试
 │   │   ├── test_dashboard_ingestion_management.py             # Dashboard Ingestion 管理页测试
 │   │   ├── test_dashboard_ingestion_trace.py                  # Dashboard Ingestion 追踪页测试
 │   │   ├── test_dashboard_query_trace.py                      # Dashboard Query 追踪页测试
+│   │   ├── test_dashboard_navigation.py                       # Dashboard 页面跳转与联动测试
+│   │   ├── test_dashboard_trace_compare.py                    # Dashboard Query Trace 对比测试
 │   │   └── test_evaluation_runner.py                          # 评估运行器集成测试
 │   ├── e2e/                                                   # 端到端测试
 │   │   ├── test_mcp_stdio_flow.py                             # MCP STDIO 调用链路 E2E 测试
 │   │   ├── test_mcp_tool_contracts.py                         # MCP tool 响应契约 E2E 测试
-│   │   ├── test_mcp_client_simulation.py                      # MCP Client 模拟 E2E 测试
-│   │   ├── test_dashboard_smoke.py                            # Dashboard 冒烟 E2E 测试
-│   │   ├── test_evaluation_visible_in_dashboard.py            # 评估结果在 Dashboard 可见性测试
-│   │   └── test_full_chain_acceptance.py                      # 全链路验收 E2E 测试
+│   │   ├── test_mcp_client_simulation.py                      # MCP Client 全工具 E2E 测试
+│   │   ├── test_dashboard_smoke.py                            # Dashboard 最终回归 E2E 测试
+│   │   ├── test_evaluation_visible_in_dashboard.py            # 真实评估结果在 Dashboard 可见性测试
+│   │   └── test_full_chain_acceptance.py                      # 一键全链路验收 E2E 测试
 │   ├── fixtures/                                              # 测试样例数据
 │   │   ├── documents/                                         # 文档样例
 │   │   ├── markdown/                                          # Markdown 样例
@@ -1939,9 +1978,9 @@ RAGMS/                                                         # 项目根目录
 │   │   └── fake_evaluator.py                                  # 假 Evaluator 实现
 │   └── conftest.py                                            # pytest 全局 fixtures 与钩子
 └── docs/                                                      # 补充文档目录
-    ├── architecture/                                          # 架构设计文档
-    ├── api/                                                   # API / tool 文档
-    └── dashboards/                                            # Dashboard 说明文档
+    ├── architecture/                                          # 架构设计与实现对齐文档
+    ├── api/                                                   # API / MCP tool 与验收说明文档
+    └── dashboards/                                            # Dashboard 使用与验收说明文档
 ```
 
 ### 5.3 模块职责说明表
@@ -1985,13 +2024,13 @@ RAGMS/                                                         # 项目根目录
 | `core/query_engine/answer_generator.py` | 调用 LLM 生成最终回答。 | 统一 LLM 接口、答案生成、上下文使用控制。 |
 | `core/management/data_service.py` | 为 Dashboard 提供文档列表、Chunk 详情、图片预览等数据读取能力。 | Chroma 元数据查询、图片列表聚合、只读数据服务。 |
 | `core/management/document_admin_service.py` | 负责文档删除、重建和管理操作。 | Chroma 删除、BM25 索引移除、图片删除、完整性记录清理。 |
-| `core/management/trace_service.py` | 提供 Trace 日志读取、分类和详情查询能力。 | 读取 `logs/traces.jsonl`、按 `trace_type` 分类、返回链路详情。 |
+| `core/management/trace_service.py` | 提供 Trace 日志读取、分类和详情查询能力。 | 读取 `logs/traces.jsonl`、按 `trace_type` 分类 `query / ingestion / evaluation`、返回链路详情。 |
+| `core/evaluation/report_service.py` | 管理评估报告的读取、对比与写入能力。 | 报告落盘、只读摘要查询、供 Dashboard 评估面板复用。 |
 | `core/evaluation/runner.py` | 执行检索/问答评估任务。 | 多评估后端组合、批量运行、结果汇总。 |
 | `core/evaluation/dataset_loader.py` | 加载并标准化评估数据集。 | 数据集 schema 统一、离线评估输入收敛。 |
-| `core/evaluation/report_service.py` | 生成综合评估报告。 | 指标聚合、实验对比、报告落盘。 |
 | `core/evaluation/metrics/` | 实现检索指标与回答质量指标。 | `hit_rate`、`MRR`、`context_precision`、`answer_relevancy` 等。 |
 | `core/trace_collector/trace_manager.py` | 管理一次请求的 Trace 生命周期。 | `trace_id` 生成、阶段注册、异常捕获、最终落盘。 |
-| `core/trace_collector/trace_schema.py` | 定义 `QueryTrace`、`IngestionTrace`、`StageTrace` 等结构。 | 统一 Trace 数据契约、结构化日志模型。 |
+| `core/trace_collector/trace_schema.py` | 定义 `QueryTrace`、`IngestionTrace`、`EvaluationTrace`、`StageTrace` 等结构。 | 统一 Trace 数据契约、结构化日志模型。 |
 | `core/trace_collector/stage_recorder.py` | 记录阶段耗时、输入输出摘要和指标。 | 阶段级打点、指标聚合、失败节点定位。 |
 | `core/trace_collector/trace_utils.py` | 提供摘要裁剪、异常序列化、敏感字段脱敏等能力。 | Trace 安全落盘、日志可读性优化。 |
 
@@ -2065,15 +2104,15 @@ RAGMS/                                                         # 项目根目录
 | `observability/logging/json_formatter.py` | 将日志和 Trace 格式化为 JSON。 | JSON Lines、结构化字段输出。 |
 | `observability/metrics/ingestion_metrics.py` | 定义和汇总摄取链路指标。 | 文档数、chunk 数、阶段耗时统计。 |
 | `observability/metrics/query_metrics.py` | 定义和汇总查询链路指标。 | 召回数量、rerank 耗时、总响应耗时。 |
-| `observability/metrics/evaluation_metrics.py` | 定义和汇总评估链路指标。 | 评估结果聚合、实验对比指标。 |
-| `observability/dashboard/app.py` | 本地 Streamlit Dashboard 入口。 | 本地 Web UI、离线可运行、复用 `core/management` 作为唯一业务服务层。 |
+| `observability/metrics/evaluation_metrics.py` | 定义和汇总评估链路指标。 | 评估结果聚合、baseline 差异、quality gate 指标。 |
+| `observability/dashboard/app.py` | 本地 Streamlit Dashboard 入口。 | 本地 Web UI、离线可运行、以 `core/management` 为主要业务服务层，并通过 `core/evaluation/report_service.py` 读取只读评估报告。 |
 | `observability/dashboard/components/` | 封装通用表格、图表和 Trace 时间线组件。 | 可复用 UI 组件、动态渲染。 |
 | `observability/dashboard/pages/system_overview.py` | 展示系统总览与核心指标。 | 汇总视图、趋势展示。 |
 | `observability/dashboard/pages/data_browser.py` | 浏览集合、文档、chunk 与元数据。 | 数据检索、回溯与过滤。 |
 | `observability/dashboard/pages/ingestion_management.py` | 管理摄取任务与文档状态。 | 任务列表、跳过/失败/重建视图。 |
 | `observability/dashboard/pages/ingestion_trace.py` | 展示 Ingestion Trace 详情。 | 按 `trace_id` 查看摄取阶段链路、状态流转与失败节点。 |
 | `observability/dashboard/pages/query_trace.py` | 展示 Query Trace 详情。 | 查看 Query 预处理、召回、融合、重排与生成链路，并支持 trace 对比。 |
-| `observability/dashboard/pages/evaluation_panel.py` | 展示评估结果与实验对比。 | 多后端评估结果聚合、case-by-case 分析。 |
+| `observability/dashboard/pages/evaluation_panel.py` | 展示预置或已落盘的评估结果与实验对比。 | 空态处理、报告摘要渲染、Evaluation Trace 关联、case-by-case 分析。 |
 
 #### 5.3.8 `shared` 层
 
@@ -2200,25 +2239,28 @@ Dashboard (Streamlit UI)
       │                                                       │
       ├─── Ingestion 管理 ────────────────────────────────────┤
       │                                                       │
-      │    触发摄取：                                          │
-      │    ├── IngestionPipeline.run(path, collection,        │
-      │    │                         on_progress=callback)    │
-      │    └── st.progress() 实时更新进度                      │
+      │    DocumentAdminService                               │
+      │    ├── ingest_documents(path, collection,             │
+      │    │                   on_progress=callback)          │
+      │    ├── rebuild_document(document_id)                  │
+      │    ├── delete_document(document_id, collection)       │
+      │    └── 返回文档状态 / 进度 / 管理结果                  │
       │                                                       │
-      │    删除文档：                                          │
-      │    ├── DocumentManager.delete_document(source, col)   │
-      │    │   ├── ChromaStore.delete_by_metadata(source=...) │
-      │    │   ├── BM25Indexer.remove_document(source=...)    │
-      │    │   ├── ImageStorage.delete_images(col, doc_hash)  │
-      │    │   └── FileIntegrity.remove_record(file_hash)     │
-      │    └── 刷新文档列表                                    │
+      ├─── Trace 查看 ────────────────────────────────────────┤
       │                                                       │
-      └─── Trace 查看 ───────────────────────────────────────┘
-           │
-           TraceService
-           ├── 读取 logs/traces.jsonl
-           ├── 按 trace_type 分类 (query / ingestion)
-           └── 返回 Trace 列表与详情
+      │    TraceService                                       │
+      │    ├── 读取 logs/traces.jsonl                         │
+      │    ├── 按 trace_type 分类 (query / ingestion / evaluation) │
+      │    ├── compare_traces(trace_ids)                      │
+      │    └── 返回 Trace 列表 / 详情 / 对比结果               │
+      │                                                       │
+      └─── 评估结果查看 ──────────────────────────────────────┘
+                                                           │
+                                                           ReportService
+                                                           ├── list_reports()
+                                                           ├── load_report(report_id)
+                                                           ├── compare_runs(run_ids)
+                                                           └── 返回报告摘要 / 详情 / 对比视图
 ```
 
 
@@ -2383,7 +2425,7 @@ dashboard:
 - `storage.sqlite.path` 是统一元数据数据库，承载 `documents`、`ingestion_history`、`images`、`processing_cache`、`evaluations` 与 `traces` 等结构化状态。
 - `query.processor / hybrid_search / reranker / response_builder` 直接映射 5.4.2 中的在线查询链路。
 - `storage.traces.file` 统一使用 `logs/traces.jsonl`，与 5.4.3 中 `TraceService` 的读取路径保持一致。
-- Dashboard 页面直接复用 `core/management` 作为业务服务层，避免在 UI 层重复定义第二套同名服务。
+- Dashboard 页面以 `core/management` 作为主要业务服务层；评估面板通过 `core/evaluation/report_service.py` 读取只读报告数据，避免在 UI 层重复定义第二套服务逻辑。
 - 所有 provider 与 backend 均通过配置切换，业务代码不直接写死具体实现。
 
 ## 6. 项目排期
@@ -2406,10 +2448,10 @@ dashboard:
 | 阶段 D | 8 | 0 | 0% |
 | 阶段 E | 9 | 0 | 0% |
 | 阶段 F | 6 | 0 | 0% |
-| 阶段 G | 6 | 0 | 0% |
-| 阶段 H | 6 | 0 | 0% |
+| 阶段 G | 8 | 0 | 0% |
+| 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **65** | **0** | **0%** |
+| **总计** | **79** | **0** | **0%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2972,177 +3014,250 @@ dashboard:
 
 #### 阶段 G：可视化管理平台 Dashboard
 
-目标：搭建 Streamlit 六页面管理平台。
+目标：基于第 3.4 节的 Dashboard 设计、第 4 章的测试约束和第 5 章的模块分层，完成一个本地优先、离线可运行、以 `core/management` 为主要业务服务层、以 `core/evaluation/report_service.py` 提供只读评估报告接口的 Streamlit Dashboard。阶段 G 完成后，系统必须已经具备六页面可视化管理能力：可查看系统总览、浏览 collection/document/chunk/image、执行文档级管理操作、按 `trace_id` 追踪 Ingestion / Query 链路，并在无评估报告时显示明确空态、在存在预置样例或已落盘报告时展示评估摘要；页面之间支持从文档跳转到 Trace、从 Trace 回溯到文档或 chunk、从评估结果回看对应运行配置与指标明细，满足第 1 章“本地优先、可观测、可测试”的既定目标。
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| G1 | 建立 Dashboard 应用壳与通用组件 | [ ] |  |  |
-| G2 | 实现系统总览页 | [ ] |  |  |
-| G3 | 实现数据浏览器页 | [ ] |  |  |
-| G4 | 实现 Ingestion 管理页 | [ ] |  |  |
-| G5 | 实现 Ingestion / Query 追踪页 | [ ] |  |  |
-| G6 | 实现评估面板页与 Dashboard 冒烟测试 | [ ] |  |  |
+| G1 | 建立 Dashboard 应用壳、页面注册与运行配置 | [ ] |  |  |
+| G2 | 完成 Dashboard 共享数据聚合接口与通用组件 | [ ] |  |  |
+| G3 | 实现系统总览页 | [ ] |  |  |
+| G4 | 实现数据浏览器页 | [ ] |  |  |
+| G5 | 实现 Ingestion 管理页 | [ ] |  |  |
+| G6 | 实现 Ingestion 追踪页 | [ ] |  |  |
+| G7 | 实现 Query 追踪页 | [ ] |  |  |
+| G8 | 实现评估面板、页面联动与 Dashboard 验收 | [ ] |  |  |
 
-##### G1 建立 Dashboard 应用壳与通用组件
+##### G1 建立 Dashboard 应用壳、页面注册与运行配置
 
-- 目标：搭建 Streamlit 入口、通用布局、表格和图表组件。
-- 修改文件：`src/ragms/observability/dashboard/app.py`、`src/ragms/observability/dashboard/components/tables.py`、`src/ragms/observability/dashboard/components/charts.py`
-- 实现类/函数：`render_app()`、`render_table()`、`render_chart()`
-- 验收标准：Dashboard 可启动；基础布局和公共组件可复用。
+- 目标：搭建 Streamlit 入口、统一导航、页面注册、运行时依赖装配和自动刷新机制，保证 Dashboard 在本地离线环境下可直接启动。
+- 修改文件：`scripts/run_dashboard.py`、`src/ragms/observability/dashboard/app.py`、`src/ragms/runtime/container.py`、`src/ragms/runtime/config.py`
+- 实现类/函数：`run_dashboard_main()`、`render_app_shell()`、`build_dashboard_context()`
+- 验收标准：`scripts/run_dashboard.py` 可启动 Dashboard；六个页面可被统一注册与切换；自动刷新、日志路径、数据目录、端口等行为由配置驱动；无网络连接时页面仍可读取本地 JSONL / SQLite / Chroma 派生数据完成渲染。
 - 测试方法：`pytest tests/integration/test_dashboard_shell.py`
 
-##### G2 实现系统总览页
+##### G2 完成 Dashboard 共享数据聚合接口与通用组件
 
-- 目标：展示集合数量、文档总量、最近 Trace、核心指标趋势。
-- 修改文件：`src/ragms/observability/dashboard/pages/system_overview.py`
-- 实现类/函数：`render_system_overview()`
-- 验收标准：系统总览页可读取并展示聚合数据。
+- 目标：收敛 Dashboard 侧所有查询与展示契约，避免页面直接读写底层存储；补齐表格、图表、Trace 时间线等共享组件，形成统一展示基座，并为评估面板建立只读报告装载契约。
+- 修改文件：`src/ragms/core/management/data_service.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/core/evaluation/report_service.py`、`src/ragms/observability/dashboard/components/tables.py`、`src/ragms/observability/dashboard/components/charts.py`、`src/ragms/observability/dashboard/components/trace_timeline.py`
+- 实现类/函数：`DataService.get_system_overview_metrics()`、`TraceService.list_trace_summaries()`、`ReportService.list_evaluation_runs()`、`render_table()`、`render_chart()`、`render_trace_timeline()`
+- 验收标准：页面层不直接拼接 SQL、JSONL 解析或 Chroma 查询；共享组件可稳定渲染空态、错误态和正常态；Trace 与 provider 信息采用动态字段渲染，不写死阶段名或模型名；评估面板只消费只读报告接口，不直接扫描页面层私有目录。
+- 测试方法：`pytest tests/integration/test_dashboard_data_access.py tests/integration/test_dashboard_system_overview.py`
+
+##### G3 实现系统总览页
+
+- 目标：提供系统整体运行面板，汇总知识库规模、组件配置摘要、最近 Trace、异常概览和关键趋势指标。
+- 修改文件：`src/ragms/observability/dashboard/pages/system_overview.py`、`src/ragms/core/management/data_service.py`、`src/ragms/core/management/trace_service.py`
+- 实现类/函数：`render_system_overview()`、`DataService.get_collection_statistics()`、`TraceService.get_recent_failures()`
+- 验收标准：页面可展示集合数、文档数、chunk 数、图片数、最近摄取/查询记录、失败统计、耗时趋势和当前组件配置摘要；当 Trace 或集合为空时能给出明确空态提示，不出现空白页。
 - 测试方法：`pytest tests/integration/test_dashboard_system_overview.py`
 
-##### G3 实现数据浏览器页
+##### G4 实现数据浏览器页
 
-- 目标：展示文档列表、chunk 详情、图片预览与元数据过滤。
+- 目标：提供 collection -> document -> chunk -> image 的逐层浏览和回溯能力，支撑第 3.1 节与第 3.5 节定义的文档生命周期和多模态检视需求。
 - 修改文件：`src/ragms/observability/dashboard/pages/data_browser.py`、`src/ragms/core/management/data_service.py`
-- 实现类/函数：`render_data_browser()`、`DataService.list_documents()`
-- 验收标准：文档、chunk、图片均可浏览和回溯。
+- 实现类/函数：`render_data_browser()`、`DataService.list_documents()`、`DataService.get_document_detail()`、`DataService.get_chunk_detail()`
+- 验收标准：支持按 collection、文档状态、页码、标签、关键词等条件过滤；可查看 chunk 正文、metadata、引用来源、图片预览与关联 `trace_id`；支持从文档详情跳转到相关 Ingestion Trace。
 - 测试方法：`pytest tests/integration/test_dashboard_data_access.py`
 
-##### G4 实现 Ingestion 管理页
+##### G5 实现 Ingestion 管理页
 
-- 目标：支持触发摄取、查看进度、删除文档、重建文档。
-- 修改文件：`src/ragms/observability/dashboard/pages/ingestion_management.py`、`src/ragms/core/management/document_admin_service.py`
-- 实现类/函数：`render_ingestion_management()`、`DocumentAdminService.delete_document()`
-- 验收标准：页面可触发摄取与删除操作，并刷新状态。
+- 目标：把摄取侧文档管理能力完整暴露到 UI，支持触发摄取、查看进度、识别增量跳过、删除文档和重建文档。
+- 修改文件：`src/ragms/observability/dashboard/pages/ingestion_management.py`、`src/ragms/core/management/document_admin_service.py`、`src/ragms/ingestion_pipeline/pipeline.py`
+- 实现类/函数：`render_ingestion_management()`、`DocumentAdminService.ingest_documents()`、`DocumentAdminService.delete_document()`、`DocumentAdminService.rebuild_document()`
+- 验收标准：页面可展示文档状态、最近摄取时间、失败原因、跳过原因和版本信息；触发删除或重建后状态可刷新并与 SQLite / Chroma / 图片存储保持一致；摄取执行过程中可显示阶段进度与当前状态。
 - 测试方法：`pytest tests/integration/test_dashboard_ingestion_management.py`
 
-##### G5 实现 Ingestion / Query 追踪页
+##### G6 实现 Ingestion 追踪页
 
-- 目标：分别支持查看 Query Trace 与 Ingestion Trace 两类链路。
-- 修改文件：`src/ragms/observability/dashboard/pages/ingestion_trace.py`、`src/ragms/observability/dashboard/pages/query_trace.py`、`src/ragms/core/management/trace_service.py`
-- 实现类/函数：`render_ingestion_trace()`、`render_query_trace()`、`TraceService.get_trace_detail()`
-- 验收标准：可按 `trace_id` 展示完整链路，并按页面区分摄取与查询视图。
-- 测试方法：`pytest tests/integration/test_dashboard_ingestion_trace.py tests/integration/test_dashboard_query_trace.py`
+- 目标：为摄取链路提供按 `trace_id` 的完整回放能力，支持阶段时间线、摘要、错误和上下文定位。
+- 修改文件：`src/ragms/observability/dashboard/pages/ingestion_trace.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/observability/dashboard/components/trace_timeline.py`
+- 实现类/函数：`render_ingestion_trace()`、`TraceService.list_traces(trace_type=\"ingestion\")`、`TraceService.get_trace_detail()`
+- 验收标准：支持按时间、状态、collection、`trace_id` 过滤；页面可展示 Load、Split、Transform、Embed、Upsert 等阶段的耗时、输入输出摘要、provider、错误信息和进度；可从 trace 回跳到对应文档或源文件。
+- 测试方法：`pytest tests/integration/test_dashboard_ingestion_trace.py`
 
-##### G6 实现评估面板页与 Dashboard 冒烟测试
+##### G7 实现 Query 追踪页
 
-- 目标：在 Dashboard 中展示评估结果，并保证整站可启动。
-- 修改文件：`src/ragms/observability/dashboard/pages/evaluation_panel.py`、`tests/e2e/test_dashboard_smoke.py`
-- 实现类/函数：`render_evaluation_panel()`
-- 验收标准：评估面板可展示历史评估；Dashboard 冒烟测试通过。
-- 测试方法：`pytest tests/e2e/test_dashboard_smoke.py`
+- 目标：为查询链路提供细粒度排障视图，覆盖 Query Processing、Dense / Sparse Retrieval、Fusion、Rerank、Generation 等阶段，并支持关键 trace 对比。
+- 修改文件：`src/ragms/observability/dashboard/pages/query_trace.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/observability/dashboard/components/charts.py`
+- 实现类/函数：`render_query_trace()`、`TraceService.compare_traces()`、`render_query_trace_comparison()`
+- 验收标准：页面可展示改写后查询、关键词、召回数量、融合结果、重排摘要、生成耗时、fallback 信息和最终引用摘要；支持选择两个 `trace_id` 做指标与阶段耗时对比；若查询未进入生成阶段，页面也能按实际阶段动态渲染。
+- 测试方法：`pytest tests/integration/test_dashboard_query_trace.py tests/integration/test_dashboard_trace_compare.py`
+
+##### G8 实现评估面板、页面联动与 Dashboard 验收
+
+- 目标：完成评估面板页面壳、跨页面跳转与整站验收，使 Dashboard 在阶段 G 结束时已形成完整的管理闭环。该任务以“支持无报告空态、预置样例报告和本地已落盘报告的只读展示”为范围，不要求系统在本阶段已经完成真实评估执行；真实评估运行、golden baseline 建立和 `test_evaluation_visible_in_dashboard.py` 的验收继续在阶段 H 完成。
+- 修改文件：`src/ragms/observability/dashboard/pages/evaluation_panel.py`、`src/ragms/core/evaluation/report_service.py`、`tests/integration/test_dashboard_navigation.py`、`tests/e2e/test_dashboard_smoke.py`
+- 实现类/函数：`render_evaluation_panel()`、`ReportService.load_report_detail()`、`resolve_dashboard_navigation_target()`
+- 验收标准：评估面板在无报告时可展示明确空态，在存在预置样例或本地已落盘报告时可展示摘要、指标概览和详情入口；系统总览、数据浏览、Ingestion 管理、Ingestion 追踪、Query 追踪、评估面板六页均可正常打开并完成关键交互；文档 -> Trace、Trace -> 文档 / chunk、评估结果 -> collection / 配置摘要等关键跳转成立；Dashboard 冒烟测试通过。
+- 测试方法：`pytest tests/integration/test_dashboard_navigation.py tests/e2e/test_dashboard_smoke.py`
+
+阶段 G 完成判定：
+
+- 本地执行 `scripts/run_dashboard.py` 后可稳定打开六个页面，且无外部网络依赖。
+- 所有页面仅通过 `core/management` 与 `core/evaluation/report_service.py` 访问业务数据，不在 UI 层直接操作底层存储。
+- 文档、chunk、图片、Ingestion Trace、Query Trace、评估报告之间形成可点击的双向回溯链路。
+- Query Trace 对比能力和跨页面跳转能力有明确测试覆盖，不依赖人工点选验证。
+- 删除、重建、摄取进度查看、Trace 过滤与对比、评估结果筛选等核心交互均可用。
+- `pytest tests/integration/test_dashboard_shell.py tests/integration/test_dashboard_system_overview.py tests/integration/test_dashboard_data_access.py tests/integration/test_dashboard_ingestion_management.py tests/integration/test_dashboard_ingestion_trace.py tests/integration/test_dashboard_query_trace.py tests/integration/test_dashboard_navigation.py tests/integration/test_dashboard_trace_compare.py tests/e2e/test_dashboard_smoke.py` 全部通过。
 
 #### 阶段 H：评估体系
 
-目标：实现 `RagasEvaluator + CompositeEvaluator + EvalRunner`，启用评估面板页面，建立 golden test set 回归基线，并在评估链路稳定后接入 `evaluate_collection` MCP Tool。
+目标：基于第 3.3.4 节评估框架抽象、第 4.3 节质量评估目标、第 5 章模块边界以及阶段 A-G 已交付的摄取、检索、MCP、Trace 与 Dashboard 能力，完成“可运行、可比较、可回归、可收口”的评估体系。阶段 H 不是单独补一个 evaluator，而是要把 `dataset -> evaluator -> runner -> report -> dashboard -> MCP tool -> regression gate` 整条质量闭环打通；阶段 H 完成后，系统必须能够对指定 collection 执行真实评估、生成结构化报告、在 Dashboard 中查看和比较实验结果、通过 MCP Tool 远程触发评估，并且补齐所有此前阶段遗留但会影响评估闭环与质量达标的未完成部分，使系统在进入阶段 I 前不再存在 A-G 的前置阻塞项。
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| H1 | 建立 golden test set 与数据集加载 | [ ] |  |  |
-| H2 | 实现 RagasEvaluator | [ ] |  |  |
-| H3 | 实现 CompositeEvaluator | [ ] |  |  |
-| H4 | 实现 EvalRunner 与报告落盘 | [ ] |  |  |
-| H5 | 接入评估面板并建立回归基线 | [ ] |  |  |
-| H6 | 接入 `evaluate_collection` MCP Tool | [ ] |  |  |
+| H1 | 收敛评估输入契约并补齐 A-G 前置遗留项 | [ ] |  |  |
+| H2 | 建立 golden test set、坏 case 集与数据集加载器 | [ ] |  |  |
+| H3 | 实现检索指标与自定义指标评估器 | [ ] |  |  |
+| H4 | 实现 `RagasEvaluator` 与评估后端适配层 | [ ] |  |  |
+| H5 | 实现 `CompositeEvaluator`、工厂装配与配置切换 | [ ] |  |  |
+| H6 | 实现 `EvalRunner`、评估报告落盘与实验对比元数据 | [ ] |  |  |
+| H7 | 打通 Dashboard 真实评估结果、趋势展示与 baseline 管理 | [ ] |  |  |
+| H8 | 接入 `evaluate_collection` MCP Tool | [ ] |  |  |
+| H9 | 基于评估结果完成质量门槛达标与前序阶段收口 | [ ] |  |  |
 
-##### H1 建立 golden test set 与数据集加载
+##### H1 收敛评估输入契约并补齐 A-G 前置遗留项
 
-- 目标：建立标准化评估数据集和回归样本。
-- 修改文件：`data/evaluation/datasets/*`、`src/ragms/core/evaluation/dataset_loader.py`
-- 实现类/函数：`DatasetLoader.load()`
-- 验收标准：golden test set 可被读取并映射为统一输入结构。
+- 目标：先收敛评估链路所依赖的输入契约，把阶段 A-G 中所有会阻塞评估闭环的遗留问题在本任务内补齐，而不是留到后续阶段被动修补。
+- 修改文件：`src/ragms/core/models/retrieval.py`、`src/ragms/core/models/response.py`、`src/ragms/core/query_engine/response_builder.py`、`src/ragms/core/query_engine/citation_builder.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/runtime/settings_models.py`
+- 实现类/函数：`normalize_evaluation_sample()`、`build_evaluation_input()`、`snapshot_runtime_config()`
+- 验收标准：评估输入统一包含 `query`、`retrieved_chunks`、`generated_answer`、`ground_truth`、`citations`、`trace_id`、`collection`、`config_snapshot`、`dataset_version` 等核心字段；Query / MCP / Dashboard / Report 之间对样本 ID、引用、配置快照和 trace 关联的口径一致；凡是 A-G 中阻塞评估闭环的未完成部分，必须在本任务内补齐并同步更新相关测试。
+- 测试方法：`pytest tests/integration/test_query_engine.py tests/integration/test_mcp_server_query.py tests/integration/test_trace_write_and_read.py`
+
+##### H2 建立 golden test set、坏 case 集与数据集加载器
+
+- 目标：建立标准化评估数据资产，使评估既能覆盖正常样本，也能覆盖已知坏 case、图片相关样本和过滤查询样本。
+- 修改文件：`data/evaluation/datasets/*`、`src/ragms/core/evaluation/dataset_loader.py`、`src/ragms/core/models/evaluation.py`
+- 实现类/函数：`DatasetLoader.load()`、`DatasetLoader.validate_manifest()`、`DatasetLoader.list_dataset_versions()`
+- 验收标准：golden test set、回归坏 case 集和样本 manifest 可被统一读取；样本结构可映射为标准评估输入；支持数据集版本号、collection 绑定关系、ground truth 来源和样本标签管理。
 - 测试方法：`pytest tests/unit/core/evaluation/test_dataset_loader.py`
 
-##### H2 实现 RagasEvaluator
+##### H3 实现检索指标与自定义指标评估器
 
-- 目标：对接 ragas 并输出标准化指标字典。
-- 修改文件：`src/ragms/libs/providers/evaluators/ragas_evaluator.py`、`tests/unit/libs/test_ragas_evaluator.py`
-- 实现类/函数：`RagasEvaluator.evaluate()`
-- 验收标准：可对样例数据返回 `context_precision`、`answer_relevancy` 等指标。
-- 测试方法：`pytest tests/unit/libs/test_ragas_evaluator.py`
+- 目标：先补齐不依赖外部评估框架的确定性指标，作为回归门槛和质量闸门的基础。
+- 修改文件：`src/ragms/core/evaluation/metrics/retrieval_metrics.py`、`src/ragms/core/evaluation/metrics/answer_metrics.py`、`src/ragms/libs/providers/evaluators/custom_metrics_evaluator.py`
+- 实现类/函数：`compute_hit_rate_at_k()`、`compute_mrr()`、`compute_ndcg_at_k()`、`compute_citation_coverage()`、`CustomMetricsEvaluator.evaluate()`
+- 验收标准：至少可稳定输出 `hit_rate@k`、`MRR`、`NDCG@K`、citation 覆盖率和必要的答案结构指标；指标字典与 `BaseEvaluator` 契约一致，可被 CompositeEvaluator 和报告服务直接消费。
+- 测试方法：`pytest tests/unit/core/evaluation/test_retrieval_metrics.py tests/unit/core/evaluation/test_answer_metrics.py tests/unit/libs/test_custom_metrics_evaluator.py`
 
-##### H3 实现 CompositeEvaluator
+##### H4 实现 `RagasEvaluator` 与评估后端适配层
 
-- 目标：支持多个 evaluator 组合运行。
-- 修改文件：`src/ragms/core/evaluation/runner.py`、`src/ragms/libs/factories/evaluator_factory.py`
-- 实现类/函数：`CompositeEvaluator.evaluate()`
-- 验收标准：多评估器可并行输出综合指标结果。
-- 测试方法：`pytest tests/unit/core/evaluation/test_composite_evaluator.py`
+- 目标：对接 ragas，并补齐评估后端适配层，保证未来接入 DeepEval 或其他后端时不需要重写主流程。
+- 修改文件：`src/ragms/libs/providers/evaluators/ragas_evaluator.py`、`src/ragms/libs/providers/evaluators/deepeval_evaluator.py`、`src/ragms/libs/abstractions/base_evaluator.py`
+- 实现类/函数：`RagasEvaluator.evaluate()`、`DeepEvalEvaluator.evaluate()`、`normalize_backend_metrics()`
+- 验收标准：ragas 可对标准样本输出 `context_precision`、`answer_relevancy`、`faithfulness` 等标准化指标；可选后端通过同一接口被装配；后端缺失依赖或不可用时能明确降级而不破坏评估主链路。
+- 测试方法：`pytest tests/unit/libs/test_ragas_evaluator.py tests/unit/libs/test_deepeval_evaluator.py`
 
-##### H4 实现 EvalRunner 与报告落盘
+##### H5 实现 `CompositeEvaluator`、工厂装配与配置切换
 
-- 目标：完成批量评估执行与 SQLite/文件报告落盘。
-- 修改文件：`src/ragms/core/evaluation/runner.py`、`src/ragms/core/evaluation/report_service.py`、`src/ragms/storage/sqlite/repositories/evaluations.py`
-- 实现类/函数：`EvalRunner.run()`、`ReportService.write_report()`
-- 验收标准：评估结果可被持久化并可供 Dashboard 读取。
-- 测试方法：`pytest tests/integration/test_evaluation_runner.py`
+- 目标：将 `custom_metrics`、`ragas`、`deepeval` 等后端纳入统一组合执行框架，并允许通过配置切换实验组合。
+- 修改文件：`src/ragms/core/evaluation/runner.py`、`src/ragms/libs/factories/evaluator_factory.py`、`src/ragms/runtime/settings_models.py`、`settings.yaml`
+- 实现类/函数：`CompositeEvaluator.evaluate()`、`build_evaluator_stack()`、`resolve_evaluation_backends()`
+- 验收标准：可按配置组合多个 evaluator 并输出统一结果；不同后端的失败、跳过和部分成功会被结构化收敛；运行时配置快照可随评估结果一起持久化。
+- 测试方法：`pytest tests/unit/core/evaluation/test_composite_evaluator.py tests/unit/runtime/test_settings_models.py`
 
-##### H5 接入评估面板并建立回归基线
+##### H6 实现 `EvalRunner`、Evaluation Trace、评估报告落盘与实验对比元数据
 
-- 目标：让 Dashboard 展示评估结果，并建立可对比的 golden baseline。
-- 修改文件：`src/ragms/observability/dashboard/pages/evaluation_panel.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`
-- 实现类/函数：`load_latest_evaluation()`
-- 验收标准：评估面板可读取最新结果；baseline 可用于回归对比。
+- 目标：完成评估主编排、Evaluation Trace 打点、报告持久化、运行标识与实验对比元数据落盘，使每次评估都可被长期追踪、可观测和可回放。
+- 修改文件：`src/ragms/core/evaluation/runner.py`、`src/ragms/core/evaluation/report_service.py`、`src/ragms/core/trace_collector/trace_manager.py`、`src/ragms/observability/metrics/evaluation_metrics.py`、`src/ragms/storage/sqlite/repositories/evaluations.py`、`src/ragms/storage/sqlite/schema.py`
+- 实现类/函数：`EvalRunner.run()`、`record_evaluation_trace()`、`aggregate_evaluation_metrics()`、`ReportService.write_report()`、`ReportService.compare_runs()`、`EvaluationRepository.save_run()`
+- 验收标准：每次评估运行都具备稳定 `run_id` 和 `trace_id`，并落盘 `collection`、`dataset_version`、`backend_set`、`config_snapshot`、指标摘要、样本级结果和失败样本明细；`TraceService` 可读取 `evaluation` 类型 trace；报告既可供 Dashboard 读取，也可供 MCP Tool 返回结果摘要。
+- 测试方法：`pytest tests/integration/test_evaluation_runner.py tests/integration/test_evaluation_trace_logging.py`
+
+##### H7 打通 Dashboard 真实评估结果、趋势展示与 baseline 管理
+
+- 目标：将阶段 G 的评估面板从“页面壳 + 只读占位”升级为“真实报告消费端”，并建立 baseline 对比能力。
+- 修改文件：`src/ragms/observability/dashboard/pages/evaluation_panel.py`、`src/ragms/core/evaluation/report_service.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`
+- 实现类/函数：`load_latest_evaluation()`、`load_baseline_comparison()`、`ReportService.resolve_latest_run()`
+- 验收标准：评估面板可读取 H6 真实落盘的评估结果，展示趋势、provider 对比、case-by-case 失败样本、baseline 差异和配置快照；无报告时显示明确空态；存在多次运行时支持按 `run_id` 做对比。
 - 测试方法：`pytest tests/e2e/test_evaluation_visible_in_dashboard.py`
 
-##### H6 接入 `evaluate_collection` MCP Tool
+##### H8 接入 `evaluate_collection` MCP Tool
 
-- 目标：在 DatasetLoader、Evaluator、EvalRunner 和报告落盘能力稳定后，对外暴露 `evaluate_collection` MCP Tool。
+- 目标：在数据集、评估器、Runner 和报告服务稳定后，对外暴露可远程触发的评估工具，并保证协议契约清晰稳定。
 - 修改文件：`src/ragms/mcp_server/tools/evaluation.py`、`src/ragms/mcp_server/schemas.py`、`src/ragms/mcp_server/tool_registry.py`、`src/ragms/core/evaluation/runner.py`、`src/ragms/core/evaluation/report_service.py`、`tests/unit/mcp_server/tools/test_evaluation_tool.py`、`tests/integration/test_mcp_server_evaluation.py`
 - 实现类/函数：`handle_evaluate_collection()`、`normalize_evaluation_request()`、`serialize_evaluation_result()`
-- 验收标准：工具可接收 `collection`、`dataset`、`metrics`、`eval_options`；可触发评估执行并返回指标摘要、样本统计、结果落盘位置和关联标识；评估失败不会影响 Server 主进程稳定性；MCP Client 可通过该 tool 触发真实评估任务。
+- 验收标准：工具可接收 `collection`、`dataset`、`metrics`、`eval_options` 等参数；可触发真实评估并返回 `run_id`、指标摘要、样本统计、结果路径与失败信息；评估失败不会拖垮 MCP Server 主进程；输出结构适合 Agent 做 A/B 比较与回归分析。
 - 测试方法：`pytest tests/unit/mcp_server/tools/test_evaluation_tool.py tests/integration/test_mcp_server_evaluation.py`
+
+##### H9 基于评估结果完成质量门槛达标与前序阶段收口
+
+- 目标：以 H1-H8 产出的评估报告为依据，对阶段 A-G 中仍未达标或未收口的部分做最后一轮补齐和调优，直到系统满足第 4.3 节定义的质量门槛后，才允许结束阶段 H。
+- 修改文件：`src/ragms/core/query_engine/*`、`src/ragms/ingestion_pipeline/*`、`src/ragms/mcp_server/*`、`src/ragms/observability/dashboard/*`、`settings.yaml`、`DEV_SPEC.md`
+- 实现类/函数：`ReportService.assert_quality_gate()`、`collect_open_stage_gaps()`、`apply_regression_fixes()`
+- 验收标准：默认配置在 golden test set 上至少满足 `Hit Rate@K >= 90%`、`MRR >= 0.8`、`NDCG@K >= 0.85`、`Faithfulness >= 0.9`、`Answer Relevancy >= 0.85`；若任一指标不达标，则必须在本任务内回补对应的摄取、检索、重排、引用、Trace、Dashboard 或 MCP 问题，直至指标达标；阶段 H 完成时，A-G 不再存在阻塞 I 阶段的未完成项。
+- 测试方法：`pytest tests/integration/test_query_engine.py tests/integration/test_evaluation_runner.py tests/integration/test_mcp_server_evaluation.py tests/e2e/test_evaluation_visible_in_dashboard.py`
+
+阶段 H 完成判定：
+
+- 可以基于指定 `collection` 和 `dataset_version` 执行真实评估，并生成稳定 `run_id` 的结构化报告。
+- `custom_metrics`、`ragas` 以及配置中启用的其他 evaluator 可通过统一接口运行并输出标准化指标。
+- Dashboard 评估面板可读取真实评估结果、展示趋势与 baseline 对比，并能回看配置快照与坏 case 明细。
+- `TraceService` 可读取 `evaluation` 类型 trace，系统总览与评估面板可消费评估指标聚合结果。
+- `evaluate_collection` MCP Tool 可稳定触发评估并返回适合 Agent 消费的摘要结果。
+- 第 4.3 节定义的关键质量门槛全部满足；任何由评估暴露出的 A-G 遗留问题都已在 H 阶段内补齐。
+- `pytest tests/unit/core/evaluation tests/unit/libs/test_ragas_evaluator.py tests/unit/libs/test_deepeval_evaluator.py tests/unit/libs/test_custom_metrics_evaluator.py tests/integration/test_evaluation_runner.py tests/integration/test_evaluation_trace_logging.py tests/integration/test_mcp_server_evaluation.py tests/e2e/test_evaluation_visible_in_dashboard.py` 全部通过。
 
 #### 阶段 I：端到端验收与文档收口
 
-目标：补齐 E2E 测试（MCP Client 模拟 + Dashboard 冒烟），完善 README，全链路验收。
+目标：在阶段 H 已经完成质量闭环与前序阶段收口的前提下，完成最终端到端回归、交付文档补齐、一键验收编排和版本冻结，使项目达到“可安装、可运行、可验收、可交付”的既定目标。阶段 I 不再新增核心业务能力，而是要把已经实现的摄取、检索、MCP、Trace、Dashboard、Evaluation 串成正式交付路径；阶段 I 完成后，新成员应可按照 README 和文档在本地完成安装、摄取、查询、评估、Dashboard 查看和一键验收，项目也具备可发布的版本与交付说明。
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| I1 | 实现 MCP Client 模拟 E2E | [ ] |  |  |
-| I2 | 实现 Dashboard 冒烟 E2E | [ ] |  |  |
-| I3 | 完成全链路验收脚本 | [ ] |  |  |
-| I4 | 完善 README 与开发文档 | [ ] |  |  |
-| I5 | 完成最终验收与版本收口 | [ ] |  |  |
+| I1 | 实现 MCP Client 全工具最终 E2E 回归 | [ ] |  |  |
+| I2 | 实现 Dashboard 最终回归 E2E | [ ] |  |  |
+| I3 | 完成一键全链路验收脚本与摘要输出 | [ ] |  |  |
+| I4 | 完善 README、API、Dashboard 与架构文档 | [ ] |  |  |
+| I5 | 完成最终验收、交付清单与版本收口 | [ ] |  |  |
 
-##### I1 实现 MCP Client 模拟 E2E
+##### I1 实现 MCP Client 全工具最终 E2E 回归
 
-- 目标：模拟真实 MCP Client 进行端到端问答与工具调用。
+- 目标：从最终用户视角模拟真实 MCP Client，对阶段 E/F/H 已交付的全部关键工具做正式端到端回归，而不再只覆盖部分调用。
 - 修改文件：`tests/e2e/test_mcp_client_simulation.py`
 - 实现类/函数：`simulate_mcp_client_roundtrip()`
-- 验收标准：可通过模拟客户端完成 query / ingest / trace / documents 基本调用。
+- 验收标准：可通过模拟客户端完成 `query_knowledge_hub`、`ingest_documents`、`list_collections`、`get_document_summary`、`get_trace_detail`、`evaluate_collection` 全链路调用；响应结构、错误语义、引用透明和关键标识（如 `trace_id`、`run_id`）均符合规范。
 - 测试方法：`pytest tests/e2e/test_mcp_client_simulation.py`
 
-##### I2 实现 Dashboard 冒烟 E2E
+##### I2 实现 Dashboard 最终回归 E2E
 
-- 目标：验证 Dashboard 可启动并完成关键页面加载。
-- 修改文件：`tests/e2e/test_dashboard_smoke.py`
-- 实现类/函数：`dashboard_smoke_check()`
-- 验收标准：系统总览、数据浏览、Trace 查看、评估面板页面可正常打开。
-- 测试方法：`pytest tests/e2e/test_dashboard_smoke.py`
+- 目标：对最终 Dashboard 做交付前回归，验证页面加载、关键跳转、真实数据展示和核心交互在最终配置下稳定可用。
+- 修改文件：`tests/e2e/test_dashboard_smoke.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`
+- 实现类/函数：`dashboard_smoke_check()`、`assert_dashboard_regression_flow()`
+- 验收标准：系统总览、数据浏览、Ingestion 管理、Ingestion 追踪、Query 追踪、评估面板六页均可正常打开；关键导航、真实评估结果展示、文档/Trace/评估报告跳转和必要的空态渲染均通过最终回归。
+- 测试方法：`pytest tests/e2e/test_dashboard_smoke.py tests/e2e/test_evaluation_visible_in_dashboard.py`
 
-##### I3 完成全链路验收脚本
+##### I3 完成一键全链路验收脚本与摘要输出
 
-- 目标：形成“摄取 -> 查询 -> MCP -> Trace -> Dashboard -> Evaluation”的完整验收路径。
+- 目标：形成正式的“安装后可直接执行”的全链路验收入口，把摄取、查询、MCP、Trace、Dashboard、Evaluation 串成一条可重复运行的验收脚本，并显式映射第 4.2.3 节定义的三个核心 E2E 场景。
 - 修改文件：`scripts/run_acceptance.py`、`tests/e2e/test_full_chain_acceptance.py`
-- 实现类/函数：`run_full_acceptance()`
-- 验收标准：一条命令可执行完整验收链路并输出结果摘要。
+- 实现类/函数：`run_full_acceptance()`、`render_acceptance_summary()`
+- 验收标准：一条命令可执行“摄取 -> 查询 -> MCP 调用 -> Trace 校验 -> Dashboard 校验 -> Evaluation 校验”的完整路径，并输出结构化摘要、失败项和建议排查入口；验收摘要必须显式覆盖第 4.2.3 节的场景 1（数据准备）、场景 2（召回/质量评估）、场景 3（MCP Client 功能测试）。
 - 测试方法：`pytest tests/e2e/test_full_chain_acceptance.py`
 
-##### I4 完善 README 与开发文档
+##### I4 完善 README、API、Dashboard 与架构文档
 
-- 目标：补齐安装、配置、运行、测试、调试、评估说明。
-- 修改文件：`README.md`、`DEV_SPEC.md`、`docs/architecture/*`
+- 目标：把项目使用说明从“开发者知道怎么跑”提升到“新成员按文档即可完成完整流程”。
+- 修改文件：`README.md`、`DEV_SPEC.md`、`docs/architecture/*`、`docs/api/*`、`docs/dashboards/*`
 - 实现类/函数：文档补充为主，无新增核心函数
-- 验收标准：新成员可按 README 完成本地启动、摄取、查询、评估与 Dashboard 使用。
-- 测试方法：人工走查 + README 流程冒烟验证
+- 验收标准：文档完整覆盖安装、配置、摄取、查询、MCP tools、Trace 查看、Dashboard 使用、评估执行、一键验收和常见问题排查；第 5 章目录树与实际交付文件一致，文档中的命令、路径和页面名称与实现一致。
+- 测试方法：人工走查 + README / 文档流程冒烟验证
 
-##### I5 完成最终验收与版本收口
+##### I5 完成最终验收、交付清单与版本收口
 
-- 目标：完成全项目最终验收并冻结交付版本。
-- 修改文件：`README.md`、`DEV_SPEC.md`、`pyproject.toml`
-- 实现类/函数：`print_release_summary()`（可选）
-- 验收标准：所有核心测试通过；关键用户路径验收完成；文档与实现一致。
-- 测试方法：`pytest tests/unit tests/integration tests/e2e`
+- 目标：在所有功能、测试和文档完成后，形成正式交付物并冻结发布版本。
+- 修改文件：`README.md`、`DEV_SPEC.md`、`pyproject.toml`、`scripts/run_acceptance.py`
+- 实现类/函数：`render_acceptance_summary()`、`build_release_checklist()`
+- 验收标准：所有核心测试通过；一键验收脚本输出通过摘要；交付清单包含版本号、关键命令、支持能力、限制说明和验收结果；文档、目录结构、测试与实现保持一致；覆盖率报告与第 4.4 节保持一致，其中单元测试核心逻辑覆盖率应达到 `>= 80%`、关键集成路径覆盖率达到 `100%`、第 4.2.3 节定义的三个核心 E2E 场景覆盖率达到 `100%`，项目方可进入发布或归档阶段。
+- 测试方法：`pytest --cov=src/ragms --cov-report=term-missing tests/unit tests/integration tests/e2e`
+
+阶段 I 完成判定：
+
+- 新成员仅依赖 `README.md` 与 `docs/` 下文档，即可在本地完成安装、摄取、查询、MCP 调用、Trace 查看、Dashboard 使用、评估执行和一键验收。
+- `tests/e2e/test_mcp_client_simulation.py`、`tests/e2e/test_dashboard_smoke.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`、`tests/e2e/test_full_chain_acceptance.py` 全部通过。
+- `scripts/run_acceptance.py` 可输出结构化验收摘要，作为最终交付检查入口。
+- 第 4.2.3 节定义的三个核心 E2E 场景在验收摘要中都有明确映射；第 4.4 节覆盖率目标已形成可检查报告。
+- `README.md`、`DEV_SPEC.md`、`docs/architecture/*`、`docs/api/*`、`docs/dashboards/*` 与第 5 章文件结构保持一致。
+- 版本号、交付清单和验收结论全部收口，项目达到可交付状态。
 
 ### 6.4 执行建议
 
