@@ -1,4 +1,71 @@
 app:
   name: ragms
-  environment: local
+  env: local
+  log_level: INFO
+  default_collection: knowledge_hub
+
+runtime:
+  settings_file: settings.yaml
+  env_file: .env
+  fail_fast_on_invalid_config: true
+
+mcp:
+  transport: stdio
+  server_name: ragms-mcp-server
+  tools:
+    - query_knowledge_hub
+    - ingest_documents
+    - list_collections
+    - get_document_summary
+    - get_trace_detail
+    - evaluate_collection
+
+models:
+  llm:
+    provider: openai
+    model: gpt-4.1-mini
+    api_key_env: OPENAI_API_KEY
+    temperature: 0.1
+    max_tokens: 2048
+  transform_llm:
+    provider: openai
+    model: gpt-4.1-mini
+    api_key_env: OPENAI_API_KEY
+  vision_llm:
+    provider: openai
+    model: gpt-4.1-mini
+    api_key_env: OPENAI_API_KEY
+  embedding:
+    dense:
+      provider: openai
+      model: text-embedding-3-large
+      api_key_env: OPENAI_API_KEY
+      batch_size: 64
+    sparse:
+      provider: bm25
+      tokenizer: default
+  reranker:
+    mode: cross_encoder
+    model: BAAI/bge-reranker-base
+    enabled: true
+
+storage:
+  sqlite:
+    path: data/metadata/ragms.db
+  chroma:
+    path: data/vector_store/chroma
+    collection_prefix: ragms_
+  bm25:
+    index_dir: data/indexes/sparse
+  images:
+    dir: data/images
+  traces:
+    file: logs/traces.jsonl
+  app_logs:
+    dir: logs/app
+
+dashboard:
+  enabled: true
+  title: RAGMS Local Dashboard
+  auto_refresh: true
 
