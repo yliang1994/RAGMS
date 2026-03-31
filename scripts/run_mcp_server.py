@@ -30,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    return run_mcp_server_main()
+
+
+def run_mcp_server_main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     project_root = get_project_root()
