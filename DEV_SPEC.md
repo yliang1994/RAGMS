@@ -2527,7 +2527,7 @@ dashboard:
 | B4.7 | 落地 OpenAI Embedding provider | [x] | 2026-03-31 | 支持文档/查询向量生成、批量输入与维度校验 |
 | B4.8 | 落地 Cross-Encoder Reranker provider | [x] | 2026-03-31 | 支持稳定重排、空集处理、长候选截断与缺失分数兜底 |
 | B4.9 | 落地 LLM Reranker provider | [x] | 2026-03-31 | 支持语义式稳定重排、超时与格式化失败显式处理 |
-| B4.10 | 落地 Chroma VectorStore provider | [ ] |  |  |
+| B4.10 | 落地 Chroma VectorStore provider | [x] | 2026-03-31 | 支持写入、相似度查询、删除与空集合/缺失 ID 处理 |
 | B5 | 落地 Evaluator 抽象与工厂 | [ ] |  |  |
 | B6 | 完成工厂装配集成冒烟 | [ ] |  |  |
 
