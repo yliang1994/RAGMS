@@ -13,10 +13,10 @@ def test_vision_llm_factory_creates_configured_provider() -> None:
 
 
 def test_vision_llm_factory_switches_by_language_or_deployment_env() -> None:
-    zh_vision = VisionLLMFactory.create({"model": "qwen-vl-max"}, document_language="zh")
+    zh_vision = VisionLLMFactory.create({"model": "qwen-vl-max", "api_key": "test-key"}, document_language="zh")
     assert isinstance(zh_vision, QwenVLLM)
 
-    cn_vision = VisionLLMFactory.create({"model": "qwen-vl-max"}, deployment_env="cn")
+    cn_vision = VisionLLMFactory.create({"model": "qwen-vl-max", "api_key": "test-key"}, deployment_env="cn")
     assert isinstance(cn_vision, QwenVLLM)
 
     en_vision = VisionLLMFactory.create({"model": "gpt-4.1-mini", "api_key": "test-key"}, document_language="en")
