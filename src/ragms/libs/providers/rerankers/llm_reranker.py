@@ -15,6 +15,37 @@ class LLMReranker(BaseReranker):
         candidates: list[dict[str, Any]],
         top_k: int | None = None,
     ) -> list[dict[str, Any]]:
-        ranked = sorted(candidates, key=lambda item: len(str(item.get("text", ""))), reverse=True)
-        return ranked if top_k is None else ranked[:top_k]
+        if not candidates:
+            return []
 
+        scored = [self._score_candidate(query, candidate, index) for index, candidate in enumerate(candidates)]
+        ranked = sorted(
+            scored,
+            key=lambda item: (float(item["rerank_score"]), float(item.get("score", 0.0)), -int(item["_input_index"])),
+            reverse=True,
+        )
+        cleaned = [{key: value for key, value in item.items() if key != "_input_index"} for item in ranked]
+        if top_k is None:
+            return cleaned
+        if top_k <= 0:
+            return []
+        return cleaned[:top_k]
+
+    def _score_candidate(self, query: str, candidate: dict[str, Any], index: int) -> dict[str, Any]:
+        if candidate.get("simulate_timeout"):
+            raise TimeoutError("LLM reranker timed out")
+        if "text" not in candidate:
+            raise RuntimeError("LLM reranker formatting failed")
+
+        text = str(candidate["text"])
+        query_terms = set(query.lower().split())
+        text_terms = set(text.lower().split())
+        semantic_overlap = len(query_terms & text_terms)
+        base_score = float(candidate.get("score", 0.0))
+        rerank_score = (semantic_overlap * 2.0) + base_score + (min(len(text), 500) / 1000.0)
+        return {
+            **candidate,
+            "score": base_score,
+            "rerank_score": rerank_score,
+            "_input_index": index,
+        }
