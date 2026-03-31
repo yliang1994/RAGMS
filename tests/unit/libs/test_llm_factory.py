@@ -11,7 +11,7 @@ def test_llm_factory_creates_configured_provider() -> None:
     llm = LLMFactory.create({"provider": "openai", "model": "gpt-4.1-mini", "temperature": 0.1, "api_key": "test-key"})
     assert isinstance(llm, OpenAILLM)
 
-    llm = LLMFactory.create({"provider": "qwen", "model": "qwen-max"})
+    llm = LLMFactory.create({"provider": "qwen", "model": "qwen-max", "api_key": "test-key"})
     assert isinstance(llm, QwenLLM)
 
 
