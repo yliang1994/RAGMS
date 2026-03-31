@@ -8,7 +8,8 @@ from ragms.runtime.container import ServiceContainer, build_container
 from ragms.runtime.exceptions import DependencyAssemblyError
 
 
-def test_build_container_returns_placeholder_components() -> None:
+def test_build_container_returns_placeholder_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     container = build_container()
 
     assert isinstance(container, ServiceContainer)
@@ -83,7 +84,8 @@ dashboard:
         build_container(invalid_settings)
 
 
-def test_service_container_get_raises_key_error_for_unknown_service() -> None:
+def test_service_container_get_raises_key_error_for_unknown_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     container = build_container()
 
     with pytest.raises(KeyError):

@@ -6,6 +6,10 @@ from pathlib import Path
 
 
 def test_bootstrap_entrypoints_can_be_called(project_root: Path) -> None:
+    env = {
+        **dict(__import__("os").environ),
+        "OPENAI_API_KEY": "test-openai-key",
+    }
     commands = [
         [sys.executable, "scripts/query_cli.py", "--check"],
         [sys.executable, "scripts/run_dashboard.py", "--check"],
@@ -20,6 +24,7 @@ def test_bootstrap_entrypoints_can_be_called(project_root: Path) -> None:
             check=False,
             capture_output=True,
             text=True,
+            env=env,
         )
         assert completed.returncode == 0, completed.stderr
         assert "status=bootstrap-ready" in completed.stdout
