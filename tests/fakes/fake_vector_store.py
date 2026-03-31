@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ragms.libs.abstractions.base_vector_store import BaseVectorStore
+
 
 @dataclass
-class FakeVectorStore:
+class FakeVectorStore(BaseVectorStore):
     records: list[dict[str, Any]] = field(default_factory=list)
 
     def upsert(self, items: list[dict[str, Any]]) -> int:
@@ -20,4 +22,3 @@ class FakeVectorStore:
             scored.append({**item, "score": score})
         scored.sort(key=lambda item: item["score"], reverse=True)
         return scored[:top_k]
-

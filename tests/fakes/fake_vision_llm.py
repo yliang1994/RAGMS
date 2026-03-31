@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ragms.libs.abstractions.base_vision_llm import BaseVisionLLM
+
 
 @dataclass
-class FakeVisionLLM:
+class FakeVisionLLM(BaseVisionLLM):
     default_caption: str = "fake-image-caption"
     calls: list[dict[str, object]] = field(default_factory=list)
 
@@ -14,4 +16,3 @@ class FakeVisionLLM:
             "caption": self.default_caption,
             "image_ref": image_ref,
         }
-

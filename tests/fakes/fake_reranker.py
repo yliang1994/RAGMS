@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ragms.libs.abstractions.base_reranker import BaseReranker
+
 
 @dataclass
-class FakeReranker:
+class FakeReranker(BaseReranker):
     calls: list[dict[str, Any]] = field(default_factory=list)
 
     def rerank(self, query: str, candidates: list[dict[str, Any]], top_k: int | None = None) -> list[dict[str, Any]]:
@@ -18,4 +20,3 @@ class FakeReranker:
         if top_k is None:
             return ranked
         return ranked[:top_k]
-
