@@ -2520,7 +2520,7 @@ dashboard:
 | B3 | 实现 LLM / Vision LLM / Embedding / Reranker 工厂 | [x] | 2026-03-31 | 四类模型工厂已接通，支持 provider 切换与配置校验 |
 | B4.1 | 落地 MarkItDown Loader provider | [x] | 2026-03-31 | 支持文件读取、统一文档对象输出与异常输入校验 |
 | B4.2 | 落地 Recursive Character Splitter provider | [x] | 2026-03-31 | 支持稳定窗口切分、overlap 控制与边界元数据输出 |
-| B4.3 | 落地 OpenAI LLM provider | [ ] |  |  |
+| B4.3 | 落地 OpenAI LLM provider | [x] | 2026-03-31 | 支持同步生成、流式输出与配置/输入异常校验 |
 | B4.4 | 落地 Qwen / DeepSeek LLM providers | [ ] |  |  |
 | B4.5 | 落地 GPT-4o Vision provider | [ ] |  |  |
 | B4.6 | 落地 Qwen-VL provider | [ ] |  |  |
