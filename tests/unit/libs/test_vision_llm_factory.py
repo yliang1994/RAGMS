@@ -8,7 +8,7 @@ from ragms.libs.providers.vision_llms.qwen_vl_llm import QwenVLLM
 
 
 def test_vision_llm_factory_creates_configured_provider() -> None:
-    vision_llm = VisionLLMFactory.create({"provider": "openai", "model": "gpt-4.1-mini"})
+    vision_llm = VisionLLMFactory.create({"provider": "openai", "model": "gpt-4.1-mini", "api_key": "test-key"})
     assert isinstance(vision_llm, GPT4OVisionLLM)
 
 
@@ -19,7 +19,7 @@ def test_vision_llm_factory_switches_by_language_or_deployment_env() -> None:
     cn_vision = VisionLLMFactory.create({"model": "qwen-vl-max"}, deployment_env="cn")
     assert isinstance(cn_vision, QwenVLLM)
 
-    en_vision = VisionLLMFactory.create({"model": "gpt-4.1-mini"}, document_language="en")
+    en_vision = VisionLLMFactory.create({"model": "gpt-4.1-mini", "api_key": "test-key"}, document_language="en")
     assert isinstance(en_vision, GPT4OVisionLLM)
 
 
@@ -29,4 +29,3 @@ def test_vision_llm_factory_rejects_invalid_config() -> None:
 
     with pytest.raises(ValueError, match="Unknown vision llm provider"):
         VisionLLMFactory.create({"provider": "missing", "model": "demo"})
-

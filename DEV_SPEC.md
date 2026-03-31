@@ -2522,7 +2522,7 @@ dashboard:
 | B4.2 | 落地 Recursive Character Splitter provider | [x] | 2026-03-31 | 支持稳定窗口切分、overlap 控制与边界元数据输出 |
 | B4.3 | 落地 OpenAI LLM provider | [x] | 2026-03-31 | 支持同步生成、流式输出与配置/输入异常校验 |
 | B4.4 | 落地 Qwen / DeepSeek LLM providers | [x] | 2026-03-31 | 支持同步/流式输出、网关参数透传与失败场景校验 |
-| B4.5 | 落地 GPT-4o Vision provider | [ ] |  |  |
+| B4.5 | 落地 GPT-4o Vision provider | [x] | 2026-03-31 | 支持单图/批量 caption、图文上下文与图像输入异常校验 |
 | B4.6 | 落地 Qwen-VL provider | [ ] |  |  |
 | B4.7 | 落地 OpenAI Embedding provider | [ ] |  |  |
 | B4.8 | 落地 Cross-Encoder Reranker provider | [ ] |  |  |
