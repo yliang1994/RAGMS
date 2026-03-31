@@ -2516,7 +2516,7 @@ dashboard:
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
 | B1 | 定义抽象基类集合 | [x] | 2026-03-31 | 9 个抽象接口已建立，契约测试通过 |
-| B2 | 实现 Loader / Splitter / VectorStore 工厂 | [ ] |  |  |
+| B2 | 实现 Loader / Splitter / VectorStore 工厂 | [x] | 2026-03-31 | 默认工厂与占位 provider 已接通，工厂单测通过 |
 | B3 | 实现 LLM / Vision LLM / Embedding / Reranker 工厂 | [ ] |  |  |
 | B4.1 | 落地 MarkItDown Loader provider | [ ] |  |  |
 | B4.2 | 落地 Recursive Character Splitter provider | [ ] |  |  |
