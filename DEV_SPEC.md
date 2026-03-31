@@ -2519,7 +2519,7 @@ dashboard:
 | B2 | 实现 Loader / Splitter / VectorStore 工厂 | [x] | 2026-03-31 | 默认工厂与占位 provider 已接通，工厂单测通过 |
 | B3 | 实现 LLM / Vision LLM / Embedding / Reranker 工厂 | [x] | 2026-03-31 | 四类模型工厂已接通，支持 provider 切换与配置校验 |
 | B4.1 | 落地 MarkItDown Loader provider | [x] | 2026-03-31 | 支持文件读取、统一文档对象输出与异常输入校验 |
-| B4.2 | 落地 Recursive Character Splitter provider | [ ] |  |  |
+| B4.2 | 落地 Recursive Character Splitter provider | [x] | 2026-03-31 | 支持稳定窗口切分、overlap 控制与边界元数据输出 |
 | B4.3 | 落地 OpenAI LLM provider | [ ] |  |  |
 | B4.4 | 落地 Qwen / DeepSeek LLM providers | [ ] |  |  |
 | B4.5 | 落地 GPT-4o Vision provider | [ ] |  |  |
