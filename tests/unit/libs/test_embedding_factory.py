@@ -7,7 +7,9 @@ from ragms.libs.providers.embeddings.openai_embedding import OpenAIEmbedding
 
 
 def test_embedding_factory_creates_configured_provider() -> None:
-    embedding = EmbeddingFactory.create({"provider": "openai", "model": "text-embedding-3-large", "batch_size": 32})
+    embedding = EmbeddingFactory.create(
+        {"provider": "openai", "model": "text-embedding-3-large", "batch_size": 32, "api_key": "test-key"}
+    )
     assert isinstance(embedding, OpenAIEmbedding)
     assert embedding.batch_size == 32
 
@@ -18,4 +20,3 @@ def test_embedding_factory_rejects_invalid_config() -> None:
 
     with pytest.raises(ValueError, match="Unknown embedding provider"):
         EmbeddingFactory.create({"provider": "missing", "model": "demo"})
-
