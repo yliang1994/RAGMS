@@ -2525,7 +2525,7 @@ dashboard:
 | B4.5 | 落地 GPT-4o Vision provider | [x] | 2026-03-31 | 支持单图/批量 caption、图文上下文与图像输入异常校验 |
 | B4.6 | 落地 Qwen-VL provider | [x] | 2026-03-31 | 支持单图/批量 caption、上下文输入与低质量/不可用场景处理 |
 | B4.7 | 落地 OpenAI Embedding provider | [x] | 2026-03-31 | 支持文档/查询向量生成、批量输入与维度校验 |
-| B4.8 | 落地 Cross-Encoder Reranker provider | [ ] |  |  |
+| B4.8 | 落地 Cross-Encoder Reranker provider | [x] | 2026-03-31 | 支持稳定重排、空集处理、长候选截断与缺失分数兜底 |
 | B4.9 | 落地 LLM Reranker provider | [ ] |  |  |
 | B4.10 | 落地 Chroma VectorStore provider | [ ] |  |  |
 | B5 | 落地 Evaluator 抽象与工厂 | [ ] |  |  |
