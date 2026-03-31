@@ -1,4 +1,5 @@
 from ragms.libs.factories.embedding_factory import EmbeddingFactory
+from ragms.libs.factories.evaluator_factory import EvaluatorFactory
 from ragms.libs.factories.llm_factory import LLMFactory
 from ragms.libs.factories.loader_factory import LoaderFactory
 from ragms.libs.factories.reranker_factory import RerankerFactory
@@ -10,6 +11,7 @@ __all__ = [
     "LLMFactory",
     "VisionLLMFactory",
     "EmbeddingFactory",
+    "EvaluatorFactory",
     "RerankerFactory",
     "LoaderFactory",
     "SplitterFactory",
