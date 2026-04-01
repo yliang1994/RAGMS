@@ -1,6 +1,6 @@
 # DEV_SPEC
 
-Version: `1.0.0`
+Version: `1.0.1`
 
 ## 目录
 
@@ -1385,6 +1385,7 @@ Hybrid Search 命中 Chunk（正文含 "[图片描述: 系统采用三层架构.
 
 - 单元测试默认不依赖网络，不调用真实外部模型、真实远程数据库或付费 API。
 - 所有外部模型调用必须 mock，且优先 mock 在抽象边界处，而不是深入第三方 SDK 内部。
+- 对 `sentence-transformers`、`torch`、Cross-Encoder 等重量级本地模型依赖，单元测试中禁止真实加载模型权重；必须通过 fake provider、stub 或 mock 替代，避免测试启动阶段重复导入与初始化。
 - 涉及文件、SQLite、Chroma 等本地依赖时，应优先使用临时目录、内存数据库或 fake 实现，避免污染真实开发数据。
 - 测试应优先覆盖确定性逻辑，避免引入高随机性断言。
 
@@ -1518,6 +1519,8 @@ E2E 测试需要重点回答以下问题：
 ### 4.4 测试工具链与 CI/CD 集成
 
 **本地开发工作流**：
+- **环境初始化**：阶段 A1 必须在项目根目录创建 `.venv` 开发虚拟环境，并建立与生产数据隔离的本地测试环境基线。
+- **命令执行约束**：每次执行 `python`、`pytest`、脚本入口或其他 Python 相关命令前，必须先激活 `.venv`，禁止直接使用系统 Python 或未激活虚拟环境的解释器。
 - **快速验证**：仅运行单元测试，秒级反馈
 - **完整验证**：单元测试 + 集成测试，生成覆盖率报告
 - **质量评估**：定期执行 RAG 质量测试，监控指标变化
@@ -2471,11 +2474,13 @@ dashboard:
 
 ##### A1 初始化目录树与最小可运行入口
 
-- 目标：落地 `src/ragms`、`scripts`、`tests`、`data`、`logs` 的最小工程骨架。
-- 修改文件：`pyproject.toml`、`README.md`、`src/ragms/__init__.py`、`scripts/run_mcp_server.py`、`tests/conftest.py`
+- 目标：落地 `src/ragms`、`scripts`、`tests`、`data`、`logs` 的最小工程骨架，并在项目根目录创建 `.venv` 开发虚拟环境与隔离的本地测试环境基线。
+- 修改文件：`pyproject.toml`、`README.md`、`.gitignore`、`src/ragms/__init__.py`、`scripts/run_mcp_server.py`、`tests/conftest.py`
 - 实现类/函数：`main()`、`get_project_root()`
-- 验收标准：项目可安装；脚本可被 Python 正常执行；测试框架可被发现。
-- 测试方法：`pytest --collect-only`
+- 阶段依赖准备：先执行 `python -m venv .venv` 创建虚拟环境，再执行 `source .venv/bin/activate && python -m pip install pydantic pyyaml python-dotenv pytest pytest-mock pytest-check pytest-bdd` 完成 A 阶段基础依赖安装。
+- 环境要求：A1 开始即统一使用项目根目录 `.venv`；后续所有 `python`、`pytest`、CLI 启动与脚本执行都必须在激活 `.venv` 后进行；测试环境不得复用开发者真实数据目录或生产数据目录。
+- 验收标准：`.venv` 可成功创建并完成基础依赖安装；项目可安装；脚本可在已激活 `.venv` 的前提下被 Python 正常执行；测试框架可被发现；测试运行默认落在隔离测试环境。
+- 测试方法：`source .venv/bin/activate && pytest --collect-only`
 
 ##### A2 实现配置加载与配置模型
 
@@ -2531,11 +2536,18 @@ dashboard:
 | B5 | 落地 Evaluator 抽象与工厂 | [ ] |  |  |
 | B6 | 完成工厂装配集成冒烟 | [ ] |  |  |
 
+Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
+
+- 每个 provider 完成后，必须先执行 `source .venv/bin/activate`，再立即运行该 provider 对应的 `pytest` 用例。
+- 若执行测试时发现 `.venv` 缺少该 provider 相关依赖，必须先在已激活的 `.venv` 中安装缺失包，再重新运行同一组测试，禁止切回系统 Python 或未激活环境绕过问题。
+- 补装依赖应遵循“最小必要集”原则，只安装当前 provider 运行与测试所需的缺失包，并在对应任务备注、README 或依赖配置中补齐记录。
+
 ##### B1 定义抽象基类集合
 
 - 目标：固定所有可插拔组件的接口边界。
 - 修改文件：`src/ragms/libs/abstractions/base_loader.py`、`base_splitter.py`、`base_transform.py`、`base_llm.py`、`base_vision_llm.py`、`base_embedding.py`、`base_reranker.py`、`base_vector_store.py`、`base_evaluator.py`、`tests/unit/libs/test_abstractions.py`
 - 实现类/函数：`BaseLoader`、`BaseSplitter`、`BaseTransform`、`BaseLLM`、`BaseVisionLLM`、`BaseEmbedding`、`BaseReranker`、`BaseVectorStore`、`BaseEvaluator`
+- 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install markitdown langchain-text-splitters openai chromadb sentence-transformers`，完成 B 阶段默认 provider 与工厂测试的基础依赖安装。
 - 验收标准：所有抽象基类接口完整；方法签名稳定；测试可验证接口契约。
 - 测试方法：`pytest tests/unit/libs/test_abstractions.py`
 
@@ -2616,7 +2628,8 @@ dashboard:
 - 目标：提供 Cross-Encoder 重排模型实现，支撑多路召回结果按相关性重新排序。
 - 修改文件：`src/ragms/libs/providers/rerankers/cross_encoder_reranker.py`、`tests/unit/libs/providers/test_cross_encoder_reranker.py`
 - 实现类/函数：`CrossEncoderReranker.rerank()`
-- 验收标准：候选文档可按相关性得分稳定排序；空候选集、超长候选集与 score 缺失场景行为明确。
+- 实现约束：若底层采用 `sentence-transformers` / `torch`，模型加载必须采用懒加载 + 进程内单例复用；禁止在模块 import 阶段初始化模型；MCP Server、CLI 或其他常驻进程启动后可选执行一次预热；Hugging Face 模型缓存路径应支持配置，避免重复下载与重复构建缓存。
+- 验收标准：候选文档可按相关性得分稳定排序；空候选集、超长候选集与 score 缺失场景行为明确；同一进程内多次调用 `rerank()` 不会重复初始化 Cross-Encoder 模型。
 - 测试方法：`pytest tests/unit/libs/providers/test_cross_encoder_reranker.py`
 
 ##### B4.9 落地 LLM Reranker provider
@@ -2677,6 +2690,7 @@ dashboard:
 - 目标：建立摄取主流程骨架，支持阶段前后回调、进度通知与错误收敛。
 - 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/ingestion_pipeline/callbacks.py`、`tests/unit/ingestion_pipeline/test_pipeline_callbacks.py`
 - 实现类/函数：`IngestionPipeline.run()`、`PipelineCallback.on_stage_start()`、`PipelineCallback.on_stage_end()`
+- 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install pillow rank-bm25 jieba tenacity`，补齐 C 阶段图片处理、BM25 与重试控制所需依赖。
 - 验收标准：主流程可串联各子模块；回调在阶段边界被触发；失败可返回统一错误上下文。
 - 测试方法：`pytest tests/unit/ingestion_pipeline/test_pipeline_callbacks.py`
 
@@ -2804,6 +2818,7 @@ dashboard:
 - 目标：完成 Query 归一化、关键词提取、受控扩展与 metadata filter 解析，为 Dense/Sparse 两条路线生成统一输入。
 - 修改文件：`src/ragms/core/query_engine/query_processor.py`、`tests/unit/core/query_engine/test_query_processor.py`
 - 实现类/函数：`QueryProcessor.extract_keywords()`、`QueryProcessor.parse_filters()`、`QueryProcessor.process()`
+- 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install numpy`，补齐 D 阶段检索结果处理与基础数值计算依赖。
 - 验收标准：输入 Query 可完成空白归一化、关键词提取与停用词过滤；`collection`、`top_k`、`filters` 等请求参数可被正确校验与解析；可输出 Dense 路线使用的标准化 query、Sparse 路线使用的关键词表达式以及可前置/后置过滤信息。
 - 测试方法：`pytest tests/unit/core/query_engine/test_query_processor.py`
 
@@ -2884,6 +2899,7 @@ dashboard:
 - 目标：建立 MCP Server 主进程骨架，固定“配置加载 -> 容器装配 -> Server 创建 -> Tool 注册 -> STDIO 监听 -> 优雅退出”的生命周期。
 - 修改文件：`src/ragms/mcp_server/server.py`、`src/ragms/runtime/container.py`、`scripts/run_mcp_server.py`、`tests/unit/mcp_server/test_server_bootstrap.py`
 - 实现类/函数：`create_server()`、`run_mcp_server_main()`、`bootstrap_mcp_runtime()`
+- 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install mcp`，补齐 E 阶段 MCP Server 与协议测试依赖。
 - 验收标准：Server 可通过脚本正常启动；启动阶段可完成依赖装配并进入监听状态；初始化失败时会返回统一异常并安全退出，不留下半初始化状态。
 - 测试方法：`pytest tests/unit/mcp_server/test_server_bootstrap.py`
 
@@ -2969,6 +2985,7 @@ dashboard:
 - 目标：定义 QueryTrace / IngestionTrace / StageTrace 以及 TraceManager。
 - 修改文件：`src/ragms/core/trace_collector/trace_schema.py`、`src/ragms/core/trace_collector/trace_manager.py`
 - 实现类/函数：`TraceManager.start_trace()`、`TraceManager.finish_trace()`
+- 阶段依赖准备：F 阶段无新增强制第三方包，沿用 E 阶段已安装依赖即可；若需要优化 JSON 序列化性能，可选执行 `source .venv/bin/activate && python -m pip install orjson`。
 - 验收标准：Trace 生命周期完整；阶段可注册与收敛。
 - 测试方法：`pytest tests/unit/core/trace_collector/test_trace_manager.py`
 
@@ -3032,6 +3049,7 @@ dashboard:
 - 目标：搭建 Streamlit 入口、统一导航、页面注册、运行时依赖装配和自动刷新机制，保证 Dashboard 在本地离线环境下可直接启动。
 - 修改文件：`scripts/run_dashboard.py`、`src/ragms/observability/dashboard/app.py`、`src/ragms/runtime/container.py`、`src/ragms/runtime/config.py`
 - 实现类/函数：`run_dashboard_main()`、`render_app_shell()`、`build_dashboard_context()`
+- 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install streamlit pandas plotly`，补齐 G 阶段 Dashboard UI、数据表与图表依赖。
 - 验收标准：`scripts/run_dashboard.py` 可启动 Dashboard；六个页面可被统一注册与切换；自动刷新、日志路径、数据目录、端口等行为由配置驱动；无网络连接时页面仍可读取本地 JSONL / SQLite / Chroma 派生数据完成渲染。
 - 测试方法：`pytest tests/integration/test_dashboard_shell.py`
 
@@ -3121,6 +3139,7 @@ dashboard:
 - 目标：先收敛评估链路所依赖的输入契约，把阶段 A-G 中所有会阻塞评估闭环的遗留问题在本任务内补齐，而不是留到后续阶段被动修补。
 - 修改文件：`src/ragms/core/models/retrieval.py`、`src/ragms/core/models/response.py`、`src/ragms/core/query_engine/response_builder.py`、`src/ragms/core/query_engine/citation_builder.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/runtime/settings_models.py`
 - 实现类/函数：`normalize_evaluation_sample()`、`build_evaluation_input()`、`snapshot_runtime_config()`
+- 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install ragas deepeval datasets`，补齐 H 阶段评估后端、数据集读取与实验运行依赖。
 - 验收标准：评估输入统一包含 `query`、`retrieved_chunks`、`generated_answer`、`ground_truth`、`citations`、`trace_id`、`collection`、`config_snapshot`、`dataset_version` 等核心字段；Query / MCP / Dashboard / Report 之间对样本 ID、引用、配置快照和 trace 关联的口径一致；凡是 A-G 中阻塞评估闭环的未完成部分，必须在本任务内补齐并同步更新相关测试。
 - 测试方法：`pytest tests/integration/test_query_engine.py tests/integration/test_mcp_server_query.py tests/integration/test_trace_write_and_read.py`
 
@@ -3215,6 +3234,7 @@ dashboard:
 - 目标：从最终用户视角模拟真实 MCP Client，对阶段 E/F/H 已交付的全部关键工具做正式端到端回归，而不再只覆盖部分调用。
 - 修改文件：`tests/e2e/test_mcp_client_simulation.py`
 - 实现类/函数：`simulate_mcp_client_roundtrip()`
+- 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install pytest-cov`，补齐 I 阶段覆盖率统计与最终验收依赖。
 - 验收标准：可通过模拟客户端完成 `query_knowledge_hub`、`ingest_documents`、`list_collections`、`get_document_summary`、`get_trace_detail`、`evaluate_collection` 全链路调用；响应结构、错误语义、引用透明和关键标识（如 `trace_id`、`run_id`）均符合规范。
 - 测试方法：`pytest tests/e2e/test_mcp_client_simulation.py`
 
@@ -3270,6 +3290,7 @@ dashboard:
 ### 7.1 编码规范
 
 - Python 版本建议为 3.11+
+- 项目本地开发统一使用根目录 `.venv`，每次执行 `python`、`pytest` 或任意 Python 脚本前必须先激活该虚拟环境
 - 统一使用类型标注
 - 对外接口必须写 docstring
 - 禁止在业务层直接拼接 provider SDK 调用，必须通过适配层封装
