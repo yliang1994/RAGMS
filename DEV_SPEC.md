@@ -2446,7 +2446,7 @@ dashboard:
 | 阶段 | 总任务数 | 已完成 | 进度 |
 |------|---------|--------|------|
 | 阶段 A | 5 | 5 | 100% |
-| 阶段 B | 15 | 11 | 73% |
+| 阶段 B | 15 | 12 | 80% |
 | 阶段 C | 14 | 0 | 0% |
 | 阶段 D | 8 | 0 | 0% |
 | 阶段 E | 9 | 0 | 0% |
@@ -2454,7 +2454,7 @@ dashboard:
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **79** | **16** | **20.3%** |
+| **总计** | **79** | **17** | **21.5%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2531,7 +2531,7 @@ dashboard:
 | B4.6 | 落地 Qwen-VL provider | [x] | 2026-04-02 | qwen vl provider tests passed |
 | B4.7 | 落地 OpenAI Embedding provider | [x] | 2026-04-02 | openai embedding provider tests passed |
 | B4.8 | 落地 Cross-Encoder Reranker provider | [x] | 2026-04-02 | cross encoder reranker tests passed |
-| B4.9 | 落地 LLM Reranker provider | [ ] |  |  |
+| B4.9 | 落地 LLM Reranker provider | [x] | 2026-04-02 | llm reranker provider tests passed |
 | B4.10 | 落地 Chroma VectorStore provider | [ ] |  |  |
 | B5 | 落地 Evaluator 抽象与工厂 | [ ] |  |  |
 | B6 | 完成工厂装配集成冒烟 | [ ] |  |  |
