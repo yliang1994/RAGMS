@@ -2445,7 +2445,7 @@ dashboard:
 
 | 阶段 | 总任务数 | 已完成 | 进度 |
 |------|---------|--------|------|
-| 阶段 A | 5 | 4 | 80% |
+| 阶段 A | 5 | 5 | 100% |
 | 阶段 B | 15 | 0 | 0% |
 | 阶段 C | 14 | 0 | 0% |
 | 阶段 D | 8 | 0 | 0% |
@@ -2454,7 +2454,7 @@ dashboard:
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **79** | **4** | **5.1%** |
+| **总计** | **79** | **5** | **6.3%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2470,7 +2470,7 @@ dashboard:
 | A2 | 实现配置加载与配置模型 | [x] | 2026-04-02 | settings loader and config tests passed |
 | A3 | 实现运行时容器与依赖装配入口 | [x] | 2026-04-02 | runtime container placeholders and unit tests passed |
 | A4 | 建立 pytest 测试基座与 fake/fixture 机制 | [x] | 2026-04-02 | `pytest.ini`、共享 fixture 与 fake providers 已补齐，`pytest tests/unit -q` 通过 |
-| A5 | 建立本地启动脚本与最小冒烟测试 | [ ] |  |  |
+| A5 | 建立本地启动脚本与最小冒烟测试 | [x] | 2026-04-02 | 四个本地入口脚本已补齐，`pytest tests/integration/test_bootstrap_smoke.py` 通过 |
 
 ##### A1 初始化目录树与最小可运行入口
 

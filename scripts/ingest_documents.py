@@ -1,4 +1,4 @@
-"""Minimal local bootstrap entrypoint for the future MCP server."""
+"""Minimal local ingestion bootstrap."""
 
 from __future__ import annotations
 
@@ -9,33 +9,32 @@ from ragms.runtime.config import load_settings
 from ragms.runtime.container import build_container
 
 
-def run_mcp_server_main(argv: Sequence[str] | None = None) -> int:
-    """Bootstrap the local MCP runtime and print the selected provider set."""
+def ingest_documents_main(argv: Sequence[str] | None = None) -> int:
+    """Load runtime settings and print a placeholder ingestion summary."""
 
-    parser = argparse.ArgumentParser(description="Run the local RagMS MCP server bootstrap.")
+    parser = argparse.ArgumentParser(description="Run the local RagMS ingestion bootstrap.")
     parser.add_argument(
         "--settings",
         default="settings.yaml",
         help="Path to the settings.yaml file.",
+    )
+    parser.add_argument(
+        "--source-dir",
+        default="data/raw/documents",
+        help="Directory that would contain source documents.",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     settings = load_settings(args.settings)
     container = build_container(settings)
     print(
-        "MCP server bootstrap ready: "
-        f"llm={container.get('llm').implementation} "
+        "Ingestion bootstrap ready: "
+        f"source_dir={args.source_dir} "
         f"embedding={container.get('embedding').implementation} "
-        f"collection={settings.vector_store.collection}"
+        f"data_dir={settings.paths.data_dir}"
     )
     return 0
 
 
-def main() -> int:
-    """Backward-compatible script entrypoint."""
-
-    return run_mcp_server_main()
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(ingest_documents_main())
