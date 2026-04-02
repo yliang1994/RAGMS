@@ -1,0 +1,40 @@
+app_name: ragms
+environment: development
+
+paths:
+  project_root: .
+  data_dir: data
+  logs_dir: logs
+
+llm:
+  provider: openai
+  model: gpt-4.1-mini
+  api_key: null
+
+embedding:
+  provider: openai
+  model: text-embedding-3-small
+
+vector_store:
+  backend: chroma
+  collection: default
+
+retrieval:
+  strategy: hybrid
+  fusion_algorithm: rrf
+  rerank_backend: disabled
+
+evaluation:
+  backends:
+    - custom_metrics
+
+observability:
+  enabled: true
+  log_file: logs/traces.jsonl
+  log_level: INFO
+
+dashboard:
+  enabled: true
+  port: 8501
+  traces_file: logs/traces.jsonl
+
