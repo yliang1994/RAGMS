@@ -42,6 +42,9 @@ class Chunk:
         end_offset = int(chunk.get("end_offset", start_offset + len(str(chunk.get("content", "")))))
         content = str(chunk.get("content", ""))
         metadata = dict(chunk.get("metadata") or {})
+        metadata["chunk_index"] = chunk_index
+        metadata["document_id"] = document_id
+        metadata["source_ref"] = source_ref
         metadata["image_refs"] = list(image_refs)
         if image_occurrences:
             metadata["image_occurrences"] = [dict(item) for item in image_occurrences]
@@ -52,11 +55,13 @@ class Chunk:
         else:
             metadata.pop("images", None)
         chunk_id = cls.build_id(
-            source_sha256=source_sha256,
+            document_id=document_id,
             chunk_index=chunk_index,
             start_offset=start_offset,
             end_offset=end_offset,
             content=content,
+            source_sha256=source_sha256,
+            source_path=source_path,
         )
         return cls(
             chunk_id=chunk_id,
@@ -71,21 +76,46 @@ class Chunk:
             metadata=metadata,
         )
 
-    @staticmethod
+    @classmethod
     def build_id(
+        cls,
         *,
-        source_sha256: str,
+        document_id: str,
         chunk_index: int,
         start_offset: int,
         end_offset: int,
         content: str,
+        source_sha256: str = "",
+        source_path: str = "",
     ) -> str:
         """Build a stable chunk identifier from source identity and chunk boundaries."""
 
-        digest = hashlib.sha256(
-            f"{source_sha256}:{chunk_index}:{start_offset}:{end_offset}:{content}".encode("utf-8")
+        content_digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        document_key = cls._build_document_key(
+            document_id=document_id,
+            source_sha256=source_sha256,
+            source_path=source_path,
+        )
+        boundary_digest = hashlib.sha256(
+            f"{start_offset}:{end_offset}".encode("utf-8")
         ).hexdigest()
-        return f"chunk_{digest[:16]}"
+        return f"{document_key}_{chunk_index:04d}_{content_digest[:8]}_{boundary_digest[:6]}"
+
+    @staticmethod
+    def _build_document_key(
+        *,
+        document_id: str,
+        source_sha256: str,
+        source_path: str,
+    ) -> str:
+        """Build a readable document key for chunk identifiers."""
+
+        if document_id:
+            return document_id
+        if source_sha256:
+            return f"doc_{source_sha256[:16]}"
+        digest = hashlib.sha256(source_path.encode("utf-8")).hexdigest()
+        return f"doc_{digest[:16]}"
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the chunk into the repository's dict-based interchange format."""

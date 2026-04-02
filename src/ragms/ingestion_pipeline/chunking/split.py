@@ -40,7 +40,7 @@ class ChunkingPipeline:
         document_occurrences = self._normalize_occurrences(document_metadata)
 
         chunks: list[Chunk] = []
-        for chunk in split_chunks:
+        for fallback_chunk_index, chunk in enumerate(split_chunks):
             content = str(chunk.get("content", ""))
             start_offset = int(chunk.get("start_offset", 0))
             end_offset = int(chunk.get("end_offset", start_offset + len(content)))
@@ -60,6 +60,8 @@ class ChunkingPipeline:
             normalized_metadata = self._build_chunk_metadata(
                 document_metadata=document_metadata,
                 chunk_metadata=dict(chunk.get("metadata") or {}),
+                chunk_index=int(chunk.get("chunk_index", fallback_chunk_index)),
+                source_ref=document_id or source_path or None,
                 image_refs=referenced_images,
                 image_occurrences=chunk_occurrences,
                 images=chunk_images,
@@ -67,6 +69,7 @@ class ChunkingPipeline:
             normalized_chunk = Chunk.from_splitter_chunk(
                 {
                     **dict(chunk),
+                    "chunk_index": int(chunk.get("chunk_index", fallback_chunk_index)),
                     "metadata": normalized_metadata,
                 },
                 document_id=document_id,
@@ -157,6 +160,8 @@ class ChunkingPipeline:
         *,
         document_metadata: dict[str, Any],
         chunk_metadata: dict[str, Any],
+        chunk_index: int,
+        source_ref: str | None,
         image_refs: list[str],
         image_occurrences: list[dict[str, Any]],
         images: list[dict[str, Any]],
@@ -172,9 +177,11 @@ class ChunkingPipeline:
             {
                 key: value
                 for key, value in chunk_metadata.items()
-                if key not in {"images", "image_occurrences", "image_refs"}
+                if key not in {"images", "image_occurrences", "image_refs", "chunk_index", "source_ref"}
             }
         )
+        normalized_metadata["chunk_index"] = chunk_index
+        normalized_metadata["source_ref"] = source_ref
         normalized_metadata["image_refs"] = list(image_refs)
         if image_occurrences:
             normalized_metadata["image_occurrences"] = [dict(item) for item in image_occurrences]

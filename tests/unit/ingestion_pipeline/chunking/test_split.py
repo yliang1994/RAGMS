@@ -4,6 +4,22 @@ from ragms.ingestion_pipeline.chunking import ChunkingPipeline
 from ragms.libs.providers.splitters.recursive_character_splitter import RecursiveCharacterSplitter
 
 
+class MinimalSplitter:
+    def split(
+        self,
+        document: dict[str, object],
+        *,
+        chunk_size: int | None = None,
+        chunk_overlap: int | None = None,
+    ) -> list[dict[str, object]]:
+        del chunk_size, chunk_overlap
+        content = str(document["content"])
+        return [
+            {"content": content[:20], "start_offset": 0, "end_offset": 20, "metadata": {}},
+            {"content": content[20:40], "start_offset": 20, "end_offset": 40, "metadata": {}},
+        ]
+
+
 def _build_document() -> dict[str, object]:
     content = (
         "# Title\n\n"
@@ -71,6 +87,9 @@ def test_chunking_pipeline_builds_stable_chunks_with_offsets_and_ids() -> None:
     assert first_run[0].document_id == "doc_123"
     assert first_run[0].source_path == "docs/report.md"
     assert first_run[0].source_ref == "doc_123"
+    assert first_run[0].chunk_id.startswith("doc_123_0000_")
+    assert first_run[0].metadata["chunk_index"] == 0
+    assert first_run[0].metadata["source_ref"] == "doc_123"
     assert first_run[0].start_offset == 0
     assert all(chunk.end_offset > chunk.start_offset for chunk in first_run)
 
@@ -137,3 +156,24 @@ def test_chunk_build_id_changes_when_chunk_boundaries_or_content_change() -> Non
     right_chunks = pipeline.run(right)
 
     assert [chunk.chunk_id for chunk in left_chunks] != [chunk.chunk_id for chunk in right_chunks]
+
+
+def test_chunking_pipeline_fills_missing_chunk_indexes_from_adapter_layer() -> None:
+    pipeline = ChunkingPipeline(MinimalSplitter())
+
+    chunks = pipeline.run(_build_document())
+
+    assert [chunk.chunk_index for chunk in chunks] == [0, 1]
+    assert [chunk.metadata["chunk_index"] for chunk in chunks] == [0, 1]
+    assert all(chunk.source_ref == "doc_123" for chunk in chunks)
+
+
+def test_chunking_pipeline_changes_chunk_ids_when_runtime_chunk_config_changes() -> None:
+    document = _build_document()
+    compact_pipeline = ChunkingPipeline(RecursiveCharacterSplitter(chunk_size=70, chunk_overlap=5))
+    wide_pipeline = ChunkingPipeline(RecursiveCharacterSplitter(chunk_size=120, chunk_overlap=0))
+
+    compact_chunks = compact_pipeline.run(document)
+    wide_chunks = wide_pipeline.run(document)
+
+    assert [chunk.chunk_id for chunk in compact_chunks] != [chunk.chunk_id for chunk in wide_chunks]
