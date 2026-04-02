@@ -1,19 +1,38 @@
-"""In-memory stand-in for the Chroma vector store provider."""
+"""Chroma vector store provider backed by chromadb."""
 
 from __future__ import annotations
 
-from math import sqrt
 from typing import Any
 
+from chromadb import Client
+from chromadb.api import ClientAPI
+from chromadb.config import Settings
+
 from ragms.libs.abstractions import BaseVectorStore
+from ragms.runtime.exceptions import RagMSError
+
+
+class VectorStoreProviderError(RagMSError):
+    """Raised when the vector store provider cannot complete a request."""
 
 
 class ChromaStore(BaseVectorStore):
-    """Persist vector records with a Chroma-compatible interface surface."""
+    """Persist vector records and query them through chromadb."""
 
-    def __init__(self, *, collection: str = "default") -> None:
+    def __init__(
+        self,
+        *,
+        collection: str = "default",
+        persist_directory: str | None = None,
+        client: ClientAPI | None = None,
+    ) -> None:
         self.collection = collection
-        self._items: dict[str, dict[str, Any]] = {}
+        self.persist_directory = persist_directory
+        self._client = client or self._build_client()
+        self._collection = self._client.get_or_create_collection(
+            name=self.collection,
+            embedding_function=None,
+        )
 
     def add(
         self,
@@ -32,15 +51,17 @@ class ChromaStore(BaseVectorStore):
         resolved_metadatas = metadatas or [{} for _ in ids]
         if len(resolved_documents) != len(ids) or len(resolved_metadatas) != len(ids):
             raise ValueError("documents and metadatas must align with ids")
+        chroma_metadatas = _normalize_metadatas_for_chroma(resolved_metadatas)
 
-        for index, item_id in enumerate(ids):
-            self._items[item_id] = {
-                "id": item_id,
-                "vector": list(vectors[index]),
-                "document": resolved_documents[index],
-                "metadata": dict(resolved_metadatas[index]),
-            }
-
+        try:
+            self._collection.upsert(
+                ids=ids,
+                embeddings=vectors,
+                documents=resolved_documents,
+                metadatas=chroma_metadatas,
+            )
+        except Exception as exc:  # pragma: no cover - defensive boundary
+            raise VectorStoreProviderError("Chroma add request failed") from exc
         return ids
 
     def query(
@@ -50,43 +71,93 @@ class ChromaStore(BaseVectorStore):
         top_k: int = 5,
         filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return the closest stored entries using Euclidean distance."""
+        """Return the top-k nearest matches for a query vector."""
 
-        matches = list(self._items.values())
-        if filters:
-            matches = [
-                item
-                for item in matches
-                if all(item["metadata"].get(key) == value for key, value in filters.items())
-            ]
+        if top_k <= 0:
+            return []
+        if self._collection.count() == 0:
+            return []
 
-        ranked = sorted(
-            matches,
-            key=lambda item: self._distance(query_vector, item["vector"]),
-        )
-        return [
-            {
-                "id": item["id"],
-                "score": 1.0 / (1.0 + self._distance(query_vector, item["vector"])),
-                "document": item["document"],
-                "metadata": dict(item["metadata"]),
-            }
-            for item in ranked[:top_k]
-        ]
+        try:
+            result = self._collection.query(
+                query_embeddings=[query_vector],
+                n_results=top_k,
+                where=filters,
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception as exc:  # pragma: no cover - defensive boundary
+            raise VectorStoreProviderError("Chroma query request failed") from exc
+
+        ids = (result.get("ids") or [[]])[0]
+        documents = (result.get("documents") or [[]])[0]
+        metadatas = (result.get("metadatas") or [[]])[0]
+        distances = (result.get("distances") or [[]])[0]
+
+        matches: list[dict[str, Any]] = []
+        for index, item_id in enumerate(ids):
+            distance = float(distances[index]) if index < len(distances) else 0.0
+            matches.append(
+                {
+                    "id": item_id,
+                    "score": 1.0 / (1.0 + distance),
+                    "document": documents[index] if index < len(documents) else "",
+                    "metadata": _restore_metadata(metadatas[index] if index < len(metadatas) else {}),
+                }
+            )
+        return matches
 
     def delete(self, ids: list[str]) -> int:
         """Delete entries by id and return the deletion count."""
 
-        deleted = 0
-        for item_id in ids:
-            if item_id in self._items:
-                deleted += 1
-                del self._items[item_id]
-        return deleted
+        if not ids:
+            return 0
+        existing = self._collection.get(ids=ids, include=[])
+        existing_ids = existing.get("ids") or []
+        if not existing_ids:
+            return 0
+        try:
+            result = self._collection.delete(ids=ids)
+        except Exception as exc:  # pragma: no cover - defensive boundary
+            raise VectorStoreProviderError("Chroma delete request failed") from exc
 
-    @staticmethod
-    def _distance(left: list[float], right: list[float]) -> float:
-        size = min(len(left), len(right))
-        if size == 0:
-            return 0.0
-        return sqrt(sum((left[index] - right[index]) ** 2 for index in range(size)))
+        deleted = result.get("deleted") if isinstance(result, dict) else None
+        return int(deleted) if deleted is not None else len(existing_ids)
+
+    def _build_client(self) -> ClientAPI:
+        """Create the underlying chromadb client."""
+
+        settings = Settings(
+            is_persistent=self.persist_directory is not None,
+            persist_directory=self.persist_directory or "./chroma",
+            anonymized_telemetry=False,
+        )
+        return Client(settings)
+
+
+_EMPTY_METADATA_MARKER = "_ragms_empty_metadata"
+
+
+def _normalize_metadatas_for_chroma(
+    metadatas: list[dict[str, Any]],
+) -> list[dict[str, Any]] | None:
+    """Convert empty metadata dicts into a Chroma-compatible payload."""
+
+    if not metadatas:
+        return None
+    if all(not metadata for metadata in metadatas):
+        return None
+    normalized: list[dict[str, Any]] = []
+    for metadata in metadatas:
+        if metadata:
+            normalized.append(dict(metadata))
+        else:
+            normalized.append({_EMPTY_METADATA_MARKER: True})
+    return normalized
+
+
+def _restore_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Strip internal placeholder metadata added only for Chroma compatibility."""
+
+    restored = dict(metadata or {})
+    restored.pop(_EMPTY_METADATA_MARKER, None)
+    return restored
