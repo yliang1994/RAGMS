@@ -7,8 +7,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.auto-dev/
 data/*
 logs/*
 !data/.gitkeep
 !logs/.gitkeep
-

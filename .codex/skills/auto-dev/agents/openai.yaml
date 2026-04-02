@@ -1,0 +1,6 @@
+interface:
+  display_name: "Auto Dev"
+  short_description: "Spec-driven task automation"
+  default_prompt: "Use $auto-dev to sync DEV_SPEC.md and implement the next task."
+policy:
+  allow_implicit_invocation: true
