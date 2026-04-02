@@ -2447,14 +2447,14 @@ dashboard:
 |------|---------|--------|------|
 | 阶段 A | 5 | 5 | 100% |
 | 阶段 B | 15 | 15 | 100% |
-| 阶段 C | 14 | 4 | 29% |
+| 阶段 C | 14 | 5 | 36% |
 | 阶段 D | 8 | 0 | 0% |
 | 阶段 E | 9 | 0 | 0% |
 | 阶段 F | 6 | 0 | 0% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **79** | **24** | **30.4%** |
+| **总计** | **79** | **25** | **31.6%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2674,7 +2674,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | C2 | 实现 SQLite 元数据底座、File Integrity 与摄取历史存储 | [x] | 2026-04-02 | sqlite metadata bootstrap tests passed |
 | C3 | 实现文档注册表与状态流转 | [x] | 2026-04-02 | document registry persistence tests passed |
 | C4 | 实现文档生命周期管理 | [x] | 2026-04-02 | document lifecycle integration tests passed |
-| C5 | 实现 Chunking 切分主流程 | [ ] |  |  |
+| C5 | 实现 Chunking 切分主流程 | [x] | 2026-04-02 | chunking pipeline tests passed |
 | C6 | 实现 Transform 主编排 | [ ] |  |  |
 | C7 | 实现 Chunk 智能重组与去噪 | [ ] |  |  |
 | C8 | 实现语义元数据注入 | [ ] |  |  |
