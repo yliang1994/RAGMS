@@ -123,4 +123,4 @@ def test_run_sqlite_migrations_is_idempotent(tmp_path: Path) -> None:
     migration_count = connection.execute(
         "SELECT COUNT(*) AS count FROM schema_migrations"
     ).fetchone()["count"]
-    assert migration_count == 3
+    assert migration_count == 4

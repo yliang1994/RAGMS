@@ -35,6 +35,7 @@ class DocumentRegistry:
         document_id: str | None = None,
         status: str = "pending",
         current_stage: str = "registered",
+        version: int | None = None,
     ) -> dict[str, object]:
         """Register or refresh a document record in persistent storage."""
 
@@ -47,6 +48,7 @@ class DocumentRegistry:
             source_sha256=source_sha256,
             status=status,
             current_stage=current_stage,
+            version=version,
         )
 
     def update_status(
@@ -55,6 +57,8 @@ class DocumentRegistry:
         *,
         status: str,
         current_stage: str | None = None,
+        failure_reason: str | None = None,
+        last_ingested_at: str | None = None,
     ) -> dict[str, object]:
         """Validate and persist a document status transition."""
 
@@ -71,6 +75,8 @@ class DocumentRegistry:
             document_id,
             status=status,
             current_stage=current_stage,
+            failure_reason=failure_reason,
+            last_ingested_at=last_ingested_at,
         )
 
     def get(self, document_id: str) -> dict[str, object] | None:
