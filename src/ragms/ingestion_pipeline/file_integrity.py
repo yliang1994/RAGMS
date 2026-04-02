@@ -26,4 +26,44 @@ class FileIntegrity:
         if force_rebuild:
             return False
         source_sha256 = self.compute_sha256(source_path)
-        return self.repository.get_by_sha256(source_sha256) is not None
+        return self.repository.get_success_by_sha256(source_sha256) is not None
+
+    def mark_success(
+        self,
+        source_path: str | Path,
+        *,
+        source_sha256: str | None = None,
+        document_id: str | None = None,
+        status: str = "indexed",
+        config_version: str | None = None,
+    ) -> dict[str, object]:
+        """Persist a successful ingestion-history record for a source file."""
+
+        resolved_sha256 = source_sha256 or self.compute_sha256(source_path)
+        return self.repository.mark_success(
+            source_path=str(source_path),
+            source_sha256=resolved_sha256,
+            document_id=document_id,
+            status=status,
+            config_version=config_version,
+        )
+
+    def mark_failed(
+        self,
+        source_path: str | Path,
+        *,
+        error_message: str,
+        source_sha256: str | None = None,
+        document_id: str | None = None,
+        config_version: str | None = None,
+    ) -> dict[str, object]:
+        """Persist a failed ingestion-history record for a source file."""
+
+        resolved_sha256 = source_sha256 or self.compute_sha256(source_path)
+        return self.repository.mark_failed(
+            source_path=str(source_path),
+            source_sha256=resolved_sha256,
+            document_id=document_id,
+            error_message=error_message,
+            config_version=config_version,
+        )

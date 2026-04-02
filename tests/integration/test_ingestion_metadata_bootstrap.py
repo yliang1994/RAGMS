@@ -68,26 +68,48 @@ def test_initialize_metadata_schema_creates_default_sqlite_db_and_tables(tmp_pat
     assert "schema_migrations" in tables
     assert "documents" in tables
     assert "ingestion_history" in tables
+    journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+    assert str(journal_mode).lower() == "wal"
+    history_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(ingestion_history)").fetchall()
+    }
+    assert {"last_error", "started_at", "completed_at", "config_version"} <= history_columns
 
 
 def test_ingestion_history_repository_reads_and_updates_records(tmp_path: Path) -> None:
     connection = initialize_metadata_schema(tmp_path / "metadata.db")
     repository = IngestionHistoryRepository(connection)
 
-    first = repository.record_processed(
+    first = repository.mark_success(
         source_path="docs/a.pdf",
         source_sha256="sha-1",
         document_id="doc-1",
+        config_version="v1",
     )
-    second = repository.record_processed(
+    second = repository.mark_success(
         source_path="docs/renamed-a.pdf",
         source_sha256="sha-1",
         document_id="doc-1",
+        config_version="v1",
+    )
+    success_candidate = repository.get_success_by_sha256("sha-1")
+    failed = repository.mark_failed(
+        source_path="docs/renamed-a.pdf",
+        source_sha256="sha-1",
+        document_id="doc-1",
+        error_message="chunk failed",
+        config_version="v2",
     )
 
     assert first["source_sha256"] == "sha-1"
     assert second["source_path"] == "docs/renamed-a.pdf"
     assert repository.get_by_sha256("sha-1")["document_id"] == "doc-1"
+    assert success_candidate is not None
+    assert success_candidate["status"] == "indexed"
+    assert failed["status"] == "failed"
+    assert failed["last_error"] == "chunk failed"
+    assert repository.get_success_by_sha256("sha-1") is None
 
     row_count = connection.execute("SELECT COUNT(*) AS count FROM ingestion_history").fetchone()["count"]
     assert row_count == 1
@@ -101,4 +123,4 @@ def test_run_sqlite_migrations_is_idempotent(tmp_path: Path) -> None:
     migration_count = connection.execute(
         "SELECT COUNT(*) AS count FROM schema_migrations"
     ).fetchone()["count"]
-    assert migration_count == 2
+    assert migration_count == 3

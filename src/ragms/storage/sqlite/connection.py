@@ -11,7 +11,10 @@ def create_sqlite_connection(path: str | Path) -> sqlite3.Connection:
 
     resolved_path = Path(path).expanduser().resolve()
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(str(resolved_path))
+    connection = sqlite3.connect(str(resolved_path), timeout=30.0)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    connection.execute("PRAGMA busy_timeout = 5000")
     return connection
