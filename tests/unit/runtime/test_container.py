@@ -4,6 +4,14 @@ from pathlib import Path
 
 import pytest
 
+from ragms.libs.providers.embeddings.openai_embedding import OpenAIEmbedding
+from ragms.libs.providers.evaluators.custom_metrics_evaluator import CustomMetricsEvaluator
+from ragms.libs.providers.llm.openai_llm import OpenAILLM
+from ragms.libs.providers.loaders.markitdown_loader import MarkItDownLoader
+from ragms.libs.providers.rerankers.disabled_reranker import DisabledReranker
+from ragms.libs.providers.splitters.recursive_character_splitter import RecursiveCharacterSplitter
+from ragms.libs.providers.vector_stores.chroma_store import ChromaStore
+from ragms.libs.providers.vision_llms.qwen_vl_llm import QwenVLLLM
 from ragms.runtime.container import PlaceholderService, ServiceContainer, build_container
 from ragms.runtime.exceptions import RuntimeAssemblyError, ServiceNotFoundError
 from ragms.runtime.settings_models import AppSettings
@@ -14,17 +22,27 @@ def write_settings(path: Path, content: str) -> Path:
     return path
 
 
-def test_build_container_returns_placeholder_services_from_explicit_settings() -> None:
+def test_build_container_returns_factory_backed_services_from_explicit_settings(tmp_path: Path) -> None:
     settings = AppSettings()
+    settings.paths.data_dir = tmp_path / "data"
+    settings.paths.logs_dir = tmp_path / "logs"
 
     container = build_container(settings)
 
     assert isinstance(container, ServiceContainer)
     llm = container.get("llm")
-    assert isinstance(llm, PlaceholderService)
+    assert isinstance(llm, OpenAILLM)
     assert llm.implementation == "openai"
     assert llm.config["model"] == "gpt-4.1-mini"
+    assert isinstance(container.get("loader"), MarkItDownLoader)
+    assert isinstance(container.get("splitter"), RecursiveCharacterSplitter)
+    assert isinstance(container.get("vision_llm"), QwenVLLLM)
+    assert isinstance(container.get("embedding"), OpenAIEmbedding)
+    assert isinstance(container.get("reranker"), DisabledReranker)
+    assert isinstance(container.get("vector_store"), ChromaStore)
+    assert isinstance(container.get("evaluator"), CustomMetricsEvaluator)
     assert container.get("vector_store").implementation == "chroma"
+    assert container.get("retrieval").implementation == "hybrid"
 
 
 def test_build_container_can_load_settings_from_file(tmp_path: Path) -> None:
@@ -63,6 +81,7 @@ dashboard:
 
     assert container.settings.vector_store.collection == "docs"
     assert container.get("embedding").implementation == "openai"
+    assert container.get("vector_store").collection == "docs"
 
 
 def test_unknown_service_raises_unified_exception() -> None:
@@ -76,7 +95,7 @@ def test_assembly_failures_raise_runtime_assembly_error(monkeypatch: pytest.Monk
     def boom(_settings: AppSettings) -> dict[str, object]:
         raise ValueError("bad wiring")
 
-    monkeypatch.setattr("ragms.runtime.container._build_placeholder_services", boom)
+    monkeypatch.setattr("ragms.runtime.container._build_services", boom)
 
     with pytest.raises(RuntimeAssemblyError, match="Failed to assemble runtime container"):
         build_container(AppSettings())
