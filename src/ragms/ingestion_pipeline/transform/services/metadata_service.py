@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 from collections import Counter
 from typing import Any
@@ -12,6 +13,7 @@ _CJK_TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]{2,}")
 _SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[。！？.!?])\s+")
 _HEADING_PREFIX_PATTERN = re.compile(r"^#+\s*")
 _JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL | re.IGNORECASE)
+_LIST_ITEM_PATTERN = re.compile(r"^(?:[-*+]|\d+\.)\s+")
 
 _STOPWORDS = {
     "and",
@@ -55,47 +57,122 @@ class MetadataService:
     ) -> dict[str, Any]:
         """Return semantic metadata for the given chunk."""
 
-        del context
         content = self._normalize_text(str(chunk.get("content", "")))
         metadata = dict(chunk.get("metadata") or {})
         semantic = dict(metadata.get("semantic") or {})
+        path_context = self._path_context(chunk)
+        nearby_context = self._nearby_context(metadata, context)
 
-        title = str(semantic.get("title") or self._derive_title(content, metadata))
-        summary = str(semantic.get("summary") or self._derive_summary(content))
-        tags = self._normalize_tags(semantic.get("tags")) or self._derive_tags(content, metadata)
+        title = str(
+            semantic.get("title")
+            or self._derive_title(
+                content,
+                metadata,
+                path_context=path_context,
+                nearby_context=nearby_context,
+            )
+        )
+        summary = str(
+            semantic.get("summary")
+            or self._derive_summary(
+                content,
+                metadata,
+                title=title,
+                path_context=path_context,
+                nearby_context=nearby_context,
+            )
+        )
+        tags = self._normalize_tags(semantic.get("tags")) or self._derive_tags(
+            content,
+            metadata,
+            title=title,
+            path_context=path_context,
+            nearby_context=nearby_context,
+        )
 
         return {
-            "title": title,
-            "summary": summary,
-            "tags": tags,
+            "title": title or "Untitled chunk",
+            "summary": summary or f"Summary unavailable for {title or 'this chunk'}.",
+            "tags": tags or ["general"],
             "short_text": len(content) <= self.short_text_chars,
             "content_length": len(content),
+            "path_context": path_context,
+            "nearby_context": nearby_context,
         }
 
-    def _derive_title(self, content: str, metadata: dict[str, Any]) -> str:
+    def _derive_title(
+        self,
+        content: str,
+        metadata: dict[str, Any],
+        *,
+        path_context: str,
+        nearby_context: str,
+    ) -> str:
         heading = self._heading_candidate(metadata)
         if heading:
             return self._truncate(heading, self.max_title_chars)
 
+        if nearby_context:
+            return self._truncate(nearby_context, self.max_title_chars)
+
         first_line = self._first_line(content)
-        if first_line and len(first_line) <= self.max_title_chars and not first_line.endswith((".", "。")):
+        if (
+            first_line
+            and not _LIST_ITEM_PATTERN.match(first_line)
+            and len(first_line) <= self.max_title_chars
+            and not first_line.endswith((".", "。"))
+        ):
             return first_line
 
-        first_sentence = self._first_sentence(content)
-        return self._truncate(first_sentence or content or "Untitled chunk", self.max_title_chars)
+        if path_context and self._list_summary(content):
+            return self._truncate(path_context, self.max_title_chars)
 
-    def _derive_summary(self, content: str) -> str:
+        first_sentence = self._first_sentence(content)
+        if first_sentence:
+            return self._truncate(first_sentence, self.max_title_chars)
+
+        if path_context:
+            return self._truncate(path_context, self.max_title_chars)
+
+        return "Untitled chunk"
+
+    def _derive_summary(
+        self,
+        content: str,
+        metadata: dict[str, Any],
+        *,
+        title: str,
+        path_context: str,
+        nearby_context: str,
+    ) -> str:
+        del metadata
+        list_summary = self._list_summary(content)
+        if list_summary:
+            return self._truncate(list_summary, self.max_summary_chars)
+
         if len(content) <= self.short_text_chars:
             return content
 
         sentences = [segment.strip() for segment in _SENTENCE_SPLIT_PATTERN.split(content) if segment.strip()]
         if not sentences:
-            return self._truncate(content, self.max_summary_chars)
+            fallback = nearby_context or path_context or title or content
+            return self._truncate(
+                fallback or "Summary unavailable for this chunk.",
+                self.max_summary_chars,
+            )
 
         summary = " ".join(sentences[:2])
         return self._truncate(summary, self.max_summary_chars)
 
-    def _derive_tags(self, content: str, metadata: dict[str, Any]) -> list[str]:
+    def _derive_tags(
+        self,
+        content: str,
+        metadata: dict[str, Any],
+        *,
+        title: str,
+        path_context: str,
+        nearby_context: str,
+    ) -> list[str]:
         candidates: list[str] = []
         heading = self._heading_candidate(metadata)
         if heading:
@@ -104,9 +181,12 @@ class MetadataService:
         for section in metadata.get("section_path") or []:
             candidates.extend(self._tokenize(str(section)))
 
+        candidates.extend(self._tokenize(path_context))
+        candidates.extend(self._tokenize(nearby_context))
+        candidates.extend(self._tokenize(title))
         candidates.extend(self._tokenize(content))
         if not candidates:
-            return []
+            return ["general"]
 
         counts = Counter(candidates)
         first_seen: dict[str, int] = {}
@@ -114,7 +194,8 @@ class MetadataService:
             first_seen.setdefault(token, index)
 
         ranked = sorted(counts, key=lambda token: (-counts[token], first_seen[token], token))
-        return ranked[: self.max_tags]
+        selected = ranked[: self.max_tags]
+        return selected or ["general"]
 
     @staticmethod
     def _normalize_text(content: str) -> str:
@@ -141,6 +222,17 @@ class MetadataService:
         if parts:
             return parts[0]
         return content.strip()
+
+    @staticmethod
+    def _list_summary(content: str) -> str:
+        list_items = [
+            _LIST_ITEM_PATTERN.sub("", line.strip())
+            for line in content.splitlines()
+            if _LIST_ITEM_PATTERN.match(line.strip())
+        ]
+        if not list_items:
+            return ""
+        return "; ".join(item for item in list_items[:2] if item)
 
     @staticmethod
     def _heading_candidate(metadata: dict[str, Any]) -> str:
@@ -171,6 +263,28 @@ class MetadataService:
         cjk_tokens = _CJK_TOKEN_PATTERN.findall(text)
         merged = english_tokens + cjk_tokens
         return [token for token in merged if token not in _STOPWORDS]
+
+    @staticmethod
+    def _path_context(chunk: dict[str, Any]) -> str:
+        source_path = str(chunk.get("source_path") or "").strip()
+        if not source_path:
+            return ""
+        stem = Path(source_path).stem.replace("_", " ").replace("-", " ").strip()
+        return " ".join(part for part in stem.split() if part)
+
+    @staticmethod
+    def _nearby_context(metadata: dict[str, Any], context: dict[str, Any] | None) -> str:
+        for key in ("heading", "section_title", "previous_heading", "next_heading"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value
+
+        if context:
+            for key in ("section_title", "heading", "parent_title"):
+                value = str(context.get(key) or "").strip()
+                if value:
+                    return value
+        return ""
 
 
 def extract_json_object(response: str) -> dict[str, Any]:

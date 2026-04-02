@@ -38,12 +38,15 @@ class SemanticMetadataInjector(BaseTransform):
         enriched_chunks: list[dict[str, Any]] = []
         for chunk in chunks:
             item = dict(chunk)
+            original_content = item.get("content")
             metadata = dict(item.get("metadata") or {})
             semantic = self.service.enrich(item, context=context)
             metadata["semantic"] = semantic
             metadata["chunk_title"] = semantic["title"]
             metadata["chunk_summary"] = semantic["summary"]
             metadata["chunk_tags"] = list(semantic["tags"])
+            metadata["metadata_enriched_by"] = "rule"
             item["metadata"] = metadata
+            item["content"] = original_content
             enriched_chunks.append(item)
         return enriched_chunks

@@ -34,12 +34,13 @@ def test_inject_semantic_metadata_adds_title_summary_and_tags() -> None:
     assert "control" in semantic["tags"]
     assert result[0]["metadata"]["chunk_title"] == "Access Control"
     assert result[0]["metadata"]["chunk_tags"] == semantic["tags"]
+    assert result[0]["metadata"]["metadata_enriched_by"] == "rule"
 
 
 def test_metadata_service_handles_short_text_without_explicit_heading() -> None:
     service = MetadataService()
 
-    semantic = service.enrich(_chunk("API quota limits apply to batch jobs.") )
+    semantic = service.enrich(_chunk("API quota limits apply to batch jobs."))
 
     assert semantic["title"] == "API quota limits apply to batch jobs."
     assert semantic["summary"] == "API quota limits apply to batch jobs."
@@ -68,6 +69,38 @@ def test_injector_preserves_existing_semantic_metadata() -> None:
     assert semantic["tags"] == ["incident", "response"]
 
 
+def test_metadata_service_uses_path_context_for_weakly_structured_list_chunks() -> None:
+    service = MetadataService()
+
+    semantic = service.enrich(
+        _chunk(
+            "- verify replica status\n- promote standby if lag exceeds threshold",
+            metadata={"section_path": []},
+        )
+    )
+
+    assert semantic["title"] == "ops"
+    assert semantic["summary"] == "verify replica status; promote standby if lag exceeds threshold"
+    assert semantic["tags"]
+    assert "ops" in semantic["tags"]
+
+
+def test_metadata_service_uses_nearby_context_when_heading_is_missing() -> None:
+    service = MetadataService()
+
+    semantic = service.enrich(
+        _chunk(
+            "This paragraph explains rollback sequencing and communication points.",
+            metadata={"previous_heading": "Incident Rollback"},
+        ),
+        context={"parent_title": "Production Changes"},
+    )
+
+    assert semantic["title"] == "Incident Rollback"
+    assert semantic["summary"].startswith("This paragraph explains rollback sequencing")
+    assert "incident" in semantic["tags"]
+
+
 def test_injector_keeps_chunk_shape_stable() -> None:
     injector = SemanticMetadataInjector()
     chunk = _chunk("On-call runbooks describe paging and rollback steps.")
@@ -85,3 +118,4 @@ def test_injector_keeps_chunk_shape_stable() -> None:
         "image_refs",
         "metadata",
     }
+    assert result[0]["content"] == "On-call runbooks describe paging and rollback steps."
