@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from ragms.ingestion_pipeline.transform import TransformPipeline, TransformStepError
+from ragms.ingestion_pipeline.transform.smart_chunk_builder import SmartChunkBuilder
 
 
 class RecordingStep:
@@ -154,3 +155,51 @@ def test_transform_pipeline_restores_anchor_fields_when_steps_mutate_them() -> N
     assert result[0]["metadata"]["image_refs"] == ["img-1"]
     assert result[0]["metadata"]["document_id"] == "doc-1"
     assert result[0]["metadata"]["step_mutated"] is True
+
+
+def test_transform_pipeline_allows_smart_chunk_builder_to_merge_chunk_groups() -> None:
+    smart_builder = SmartChunkBuilder(merge_below_chars=120)
+    metadata = RecordingStep("meta")
+    pipeline = TransformPipeline(
+        smart_chunk_builder=smart_builder,
+        metadata_injector=metadata,
+    )
+
+    result = pipeline.run(
+        [
+            {
+                "content": "This policy applies to all employees because",
+                "chunk_id": "chunk-1",
+                "document_id": "doc-1",
+                "source_path": "docs/a.md",
+                "chunk_index": 0,
+                "start_offset": 0,
+                "end_offset": 44,
+                "source_ref": "doc-1",
+                "image_refs": [],
+                "metadata": {"document_id": "doc-1", "image_refs": []},
+            },
+            {
+                "content": "it defines the approval flow and exceptions.",
+                "chunk_id": "chunk-2",
+                "document_id": "doc-1",
+                "source_path": "docs/a.md",
+                "chunk_index": 1,
+                "start_offset": 45,
+                "end_offset": 90,
+                "source_ref": "doc-1",
+                "image_refs": [],
+                "metadata": {"document_id": "doc-1", "image_refs": []},
+            },
+        ]
+    )
+
+    assert len(result) == 1
+    assert result[0]["chunk_id"] == "chunk-1"
+    assert result[0]["content"] == (
+        "This policy applies to all employees because\n\n"
+        "it defines the approval flow and exceptions.|meta"
+    )
+    assert result[0]["metadata"]["smart_chunk"]["merged_from"] == ["chunk-1", "chunk-2"]
+    assert result[0]["metadata"]["chunk_id"] == "chunk-1"
+    assert result[0]["metadata"]["step_meta"] is True

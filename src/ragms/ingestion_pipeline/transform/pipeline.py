@@ -26,6 +26,7 @@ class TransformStepError(RuntimeError):
 class TransformPipeline(BaseTransform):
     """Run chunk enrichment steps in a stable, configurable order."""
 
+    _VARIABLE_SHAPE_STEPS = {"smart_chunk_builder"}
     _ANCHOR_FIELDS = (
         "chunk_id",
         "document_id",
@@ -76,6 +77,7 @@ class TransformPipeline(BaseTransform):
                     step_name=step_name,
                     previous_state=previous_state,
                     transformed_state=raw_result,
+                    allow_shape_change=step_name in self._VARIABLE_SHAPE_STEPS,
                 )
             except Exception as exc:
                 if not self.fail_open:
@@ -115,8 +117,18 @@ class TransformPipeline(BaseTransform):
         step_name: str,
         previous_state: list[dict[str, Any]],
         transformed_state: list[dict[str, Any]],
+        allow_shape_change: bool = False,
     ) -> list[dict[str, Any]]:
         """Restore invariant anchor fields after each step and validate output shape."""
+
+        if allow_shape_change and len(transformed_state) == len(previous_state):
+            return [
+                cls._restore_anchor_fields(previous_chunk, transformed_chunk)
+                for previous_chunk, transformed_chunk in zip(previous_state, transformed_state, strict=True)
+            ]
+
+        if allow_shape_change:
+            return [cls._mirror_anchor_fields(chunk) for chunk in transformed_state]
 
         if len(transformed_state) != len(previous_state):
             raise TransformStepError(
@@ -150,6 +162,27 @@ class TransformPipeline(BaseTransform):
             if previous_value is not None:
                 updated[field] = previous_value
                 metadata[field] = previous_value
+
+        updated["metadata"] = metadata
+        return updated
+
+    @classmethod
+    def _mirror_anchor_fields(cls, chunk: dict[str, Any]) -> dict[str, Any]:
+        """Copy stable anchor fields into metadata for topology-changing steps."""
+
+        updated = dict(chunk)
+        metadata = dict(updated.get("metadata") or {})
+
+        for field in cls._ANCHOR_FIELDS:
+            if field == "image_refs":
+                image_refs = list(updated.get("image_refs") or metadata.get("image_refs") or [])
+                updated["image_refs"] = image_refs
+                metadata["image_refs"] = image_refs
+                continue
+
+            value = updated.get(field)
+            if value is not None:
+                metadata[field] = value
 
         updated["metadata"] = metadata
         return updated
