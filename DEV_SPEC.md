@@ -2466,14 +2466,14 @@ dashboard:
 |------|---------|--------|------|
 | 阶段 A | 5 | 5 | 100% |
 | 阶段 B | 15 | 15 | 100% |
-| 阶段 C | 17 | 8 | 47% |
+| 阶段 C | 17 | 9 | 53% |
 | 阶段 D | 8 | 0 | 0% |
 | 阶段 E | 9 | 0 | 0% |
 | 阶段 F | 6 | 0 | 0% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **28** | **34.1%** |
+| **总计** | **82** | **29** | **35.4%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2690,7 +2690,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
 | C1 | 实现 Pipeline 主流程与回调协议 | [x] | 2026-04-02 | pipeline callback tests passed |
-| C1.1 | 实现多模态图片元数据与出现位置建模 | [ ] |  |  |
+| C1.1 | 实现多模态图片元数据与出现位置建模 | [x] | 2026-04-02 | canonical image metadata and chunk occurrence slicing tests passed |
 | C2 | 实现 SQLite 元数据底座、File Integrity 与摄取历史存储 | [x] | 2026-04-02 | sqlite metadata bootstrap tests passed |
 | C3 | 实现文档注册表与状态流转 | [x] | 2026-04-02 | document registry persistence tests passed |
 | C4 | 实现文档生命周期管理 | [x] | 2026-04-02 | document lifecycle integration tests passed |
