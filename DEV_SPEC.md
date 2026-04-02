@@ -2446,7 +2446,7 @@ dashboard:
 | 阶段 | 总任务数 | 已完成 | 进度 |
 |------|---------|--------|------|
 | 阶段 A | 5 | 5 | 100% |
-| 阶段 B | 15 | 1 | 7% |
+| 阶段 B | 15 | 2 | 13% |
 | 阶段 C | 14 | 0 | 0% |
 | 阶段 D | 8 | 0 | 0% |
 | 阶段 E | 9 | 0 | 0% |
@@ -2454,7 +2454,7 @@ dashboard:
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **79** | **6** | **7.6%** |
+| **总计** | **79** | **7** | **8.9%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2521,7 +2521,7 @@ dashboard:
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
 | B1 | 定义抽象基类集合 | [x] | 2026-04-02 | abstract base classes and contract tests passed |
-| B2 | 实现 Loader / Splitter / VectorStore 工厂 | [ ] |  |  |
+| B2 | 实现 Loader / Splitter / VectorStore 工厂 | [x] | 2026-04-02 | loader/splitter/vector store factories and tests passed |
 | B3 | 实现 LLM / Vision LLM / Embedding / Reranker 工厂 | [ ] |  |  |
 | B4.1 | 落地 MarkItDown Loader provider | [ ] |  |  |
 | B4.2 | 落地 Recursive Character Splitter provider | [ ] |  |  |
