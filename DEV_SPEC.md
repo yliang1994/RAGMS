@@ -2446,7 +2446,7 @@ dashboard:
 | 阶段 | 总任务数 | 已完成 | 进度 |
 |------|---------|--------|------|
 | 阶段 A | 5 | 5 | 100% |
-| 阶段 B | 15 | 4 | 27% |
+| 阶段 B | 15 | 5 | 33% |
 | 阶段 C | 14 | 0 | 0% |
 | 阶段 D | 8 | 0 | 0% |
 | 阶段 E | 9 | 0 | 0% |
@@ -2454,7 +2454,7 @@ dashboard:
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **79** | **9** | **11.4%** |
+| **总计** | **79** | **10** | **12.7%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2524,7 +2524,7 @@ dashboard:
 | B2 | 实现 Loader / Splitter / VectorStore 工厂 | [x] | 2026-04-02 | loader/splitter/vector store factories and tests passed |
 | B3 | 实现 LLM / Vision LLM / Embedding / Reranker 工厂 | [x] | 2026-04-02 | model factories and routing tests passed |
 | B4.1 | 落地 MarkItDown Loader provider | [x] | 2026-04-02 | markitdown loader canonical document tests passed |
-| B4.2 | 落地 Recursive Character Splitter provider | [ ] |  |  |
+| B4.2 | 落地 Recursive Character Splitter provider | [x] | 2026-04-02 | recursive character splitter provider tests passed |
 | B4.3 | 落地 OpenAI LLM provider | [ ] |  |  |
 | B4.4 | 落地 Qwen / DeepSeek LLM providers | [ ] |  |  |
 | B4.5 | 落地 GPT-4o Vision provider | [ ] |  |  |
