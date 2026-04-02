@@ -26,6 +26,17 @@ class TransformStepError(RuntimeError):
 class TransformPipeline(BaseTransform):
     """Run chunk enrichment steps in a stable, configurable order."""
 
+    _ANCHOR_FIELDS = (
+        "chunk_id",
+        "document_id",
+        "source_path",
+        "chunk_index",
+        "start_offset",
+        "end_offset",
+        "source_ref",
+        "image_refs",
+    )
+
     def __init__(
         self,
         *,
@@ -58,13 +69,20 @@ class TransformPipeline(BaseTransform):
         ):
             if step is None:
                 continue
+            previous_state = [dict(chunk) for chunk in state]
             try:
-                state = step.transform(state, context=shared_context)
+                raw_result = step.transform(state, context=shared_context)
+                state = self._normalize_step_result(
+                    step_name=step_name,
+                    previous_state=previous_state,
+                    transformed_state=raw_result,
+                )
             except Exception as exc:
                 if not self.fail_open:
                     raise TransformStepError(f"Transform step failed: {step_name}") from exc
                 warnings.append(f"{step_name}:{exc}")
                 shared_context["transform_warnings"] = warnings
+                state = [self._attach_step_fallback(chunk, step_name, str(exc)) for chunk in previous_state]
 
         if warnings:
             state = [self._attach_warnings(chunk, warnings) for chunk in state]
@@ -87,5 +105,67 @@ class TransformPipeline(BaseTransform):
         updated = dict(chunk)
         metadata = dict(updated.get("metadata") or {})
         metadata["transform_warnings"] = list(warnings)
+        updated["metadata"] = metadata
+        return updated
+
+    @classmethod
+    def _normalize_step_result(
+        cls,
+        *,
+        step_name: str,
+        previous_state: list[dict[str, Any]],
+        transformed_state: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Restore invariant anchor fields after each step and validate output shape."""
+
+        if len(transformed_state) != len(previous_state):
+            raise TransformStepError(
+                f"Transform step returned mismatched chunk count: {step_name}"
+            )
+        return [
+            cls._restore_anchor_fields(previous_chunk, transformed_chunk)
+            for previous_chunk, transformed_chunk in zip(previous_state, transformed_state, strict=True)
+        ]
+
+    @classmethod
+    def _restore_anchor_fields(
+        cls,
+        previous_chunk: dict[str, Any],
+        transformed_chunk: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Keep chunk identity and source anchors stable across transform steps."""
+
+        updated = dict(transformed_chunk)
+        previous_metadata = dict(previous_chunk.get("metadata") or {})
+        metadata = dict(updated.get("metadata") or {})
+
+        for field in cls._ANCHOR_FIELDS:
+            if field == "image_refs":
+                image_refs = list(previous_chunk.get("image_refs") or previous_metadata.get("image_refs") or [])
+                updated["image_refs"] = image_refs
+                metadata["image_refs"] = image_refs
+                continue
+
+            previous_value = previous_chunk.get(field)
+            if previous_value is not None:
+                updated[field] = previous_value
+                metadata[field] = previous_value
+
+        updated["metadata"] = metadata
+        return updated
+
+    @staticmethod
+    def _attach_step_fallback(
+        chunk: dict[str, Any],
+        step_name: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Annotate fail-open fallback information on a preserved chunk."""
+
+        updated = dict(chunk)
+        metadata = dict(updated.get("metadata") or {})
+        fallbacks = list(metadata.get("transform_fallbacks") or [])
+        fallbacks.append({"step": step_name, "reason": reason})
+        metadata["transform_fallbacks"] = fallbacks
         updated["metadata"] = metadata
         return updated
