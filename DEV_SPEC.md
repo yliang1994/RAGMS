@@ -2466,14 +2466,14 @@ dashboard:
 |------|---------|--------|------|
 | 阶段 A | 5 | 5 | 100% |
 | 阶段 B | 15 | 15 | 100% |
-| 阶段 C | 17 | 9 | 53% |
+| 阶段 C | 17 | 10 | 59% |
 | 阶段 D | 8 | 0 | 0% |
 | 阶段 E | 9 | 0 | 0% |
 | 阶段 F | 6 | 0 | 0% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **29** | **35.4%** |
+| **总计** | **82** | **30** | **36.6%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2697,7 +2697,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | C5 | 实现 Chunking 切分主流程 | [x] | 2026-04-02 | chunking pipeline tests passed |
 | C6 | 实现 Transform 主编排 | [x] | 2026-04-02 | transform pipeline tests passed |
 | C7 | 实现基于规则的 Chunk 智能重组与去噪 | [x] | 2026-04-02 | smart chunk builder tests passed |
-| C7.1 | 实现可选 LLM Chunk 智能重组 | [ ] |  |  |
+| C7.1 | 实现可选 LLM Chunk 智能重组 | [x] | 2026-04-02 | llm smart chunk refinement tests passed |
 | C8 | 实现基于规则的语义元数据注入 | [x] | 2026-04-02 | metadata injection tests passed |
 | C8.1 | 实现可选 LLM 语义元数据增强 | [ ] |  |  |
 | C9 | 实现图片描述生成 | [ ] |  |  |

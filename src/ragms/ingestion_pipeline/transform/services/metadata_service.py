@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from typing import Any
@@ -10,6 +11,7 @@ _ENGLISH_TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
 _CJK_TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]{2,}")
 _SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[。！？.!?])\s+")
 _HEADING_PREFIX_PATTERN = re.compile(r"^#+\s*")
+_JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL | re.IGNORECASE)
 
 _STOPWORDS = {
     "and",
@@ -169,3 +171,28 @@ class MetadataService:
         cjk_tokens = _CJK_TOKEN_PATTERN.findall(text)
         merged = english_tokens + cjk_tokens
         return [token for token in merged if token not in _STOPWORDS]
+
+
+def extract_json_object(response: str) -> dict[str, Any]:
+    """Parse a JSON object from plain or fenced LLM output."""
+
+    candidate = response.strip()
+    if not candidate:
+        raise ValueError("LLM response is empty")
+
+    fenced_match = _JSON_FENCE_PATTERN.search(candidate)
+    if fenced_match:
+        candidate = fenced_match.group(1).strip()
+
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError:
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("LLM response does not contain a JSON object") from None
+        payload = json.loads(candidate[start : end + 1])
+
+    if not isinstance(payload, dict):
+        raise ValueError("LLM response JSON payload must be an object")
+    return payload

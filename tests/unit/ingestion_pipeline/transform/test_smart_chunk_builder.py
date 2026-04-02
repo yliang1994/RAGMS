@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+
 from ragms.ingestion_pipeline.transform.smart_chunk_builder import SmartChunkBuilder
+from tests.fakes.fake_llm import FakeLLM
 
 
 def _chunk(
@@ -28,6 +31,25 @@ def _chunk(
             "page": 1,
         },
     }
+
+
+class FlakyLLM:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str | None]] = []
+        self._attempt = 0
+
+    def generate(self, prompt: str, *, system_prompt: str | None = None) -> str:
+        self.calls.append({"prompt": prompt, "system_prompt": system_prompt})
+        self._attempt += 1
+        if self._attempt == 1:
+            raise TimeoutError("slow llm")
+        return json.dumps(
+            {
+                "content": "Recovered refined chunk.",
+                "rationale": "retry succeeded",
+            },
+            ensure_ascii=False,
+        )
 
 
 def test_denoise_removes_noise_lines_and_drops_empty_chunks() -> None:
@@ -166,3 +188,83 @@ def test_transform_runs_denoise_then_rewrite_and_records_source_grouping() -> No
     assert result[0]["metadata"]["refined_by"] == "rule"
     assert result[0]["metadata"]["smart_chunk"]["source_chunk_count"] == 2
     assert "repaired_hyphen_break" in result[0]["metadata"]["smart_chunk"]["rewrite_actions"]
+
+
+def test_transform_applies_llm_refinement_on_top_of_rule_result() -> None:
+    llm = FakeLLM(
+        [
+            json.dumps(
+                {
+                    "content": "The onboarding checklist covers approvals and system setup.",
+                    "rationale": "Merged adjacent context into one concise chunk.",
+                },
+                ensure_ascii=False,
+            )
+        ]
+    )
+    builder = SmartChunkBuilder(
+        merge_below_chars=120,
+        enable_llm_refine=True,
+        llm=llm,
+        llm_model="fake-llm",
+        llm_prompt_version="smart_chunk_refine_v2",
+    )
+
+    result = builder.transform(
+        [
+            _chunk(0, "%%%%\nThe on-\nboarding checklist includes"),
+            _chunk(1, "the required approvals and system setup."),
+        ],
+        context={"collection": "demo"},
+    )
+
+    assert len(result) == 1
+    assert result[0]["content"] == "The onboarding checklist covers approvals and system setup."
+    assert result[0]["metadata"]["refined_by"] == "llm"
+    assert result[0]["metadata"]["smart_chunk"]["llm_refined"] is True
+    assert result[0]["metadata"]["smart_chunk"]["prompt_version"] == "smart_chunk_refine_v2"
+    assert result[0]["metadata"]["smart_chunk"]["model"] == "fake-llm"
+    assert result[0]["metadata"]["smart_chunk"]["llm_rationale"] == (
+        "Merged adjacent context into one concise chunk."
+    )
+    assert "%%%%" not in str(llm.calls[0]["prompt"])
+    assert "The onboarding checklist includes" in str(llm.calls[0]["prompt"])
+
+
+def test_refine_with_llm_falls_back_to_rule_result_when_llm_output_is_invalid() -> None:
+    builder = SmartChunkBuilder(
+        merge_below_chars=120,
+        enable_llm_refine=True,
+        llm=FakeLLM(["not json"]),
+    )
+
+    result = builder.transform(
+        [
+            _chunk(0, "This policy applies to all employees because"),
+            _chunk(1, "it defines the approval flow and exceptions."),
+        ]
+    )
+
+    assert len(result) == 1
+    assert result[0]["content"] == (
+        "This policy applies to all employees because\n\n"
+        "it defines the approval flow and exceptions."
+    )
+    assert result[0]["metadata"]["refined_by"] == "rule"
+    assert "fallback_reason" in result[0]["metadata"]
+    assert result[0]["metadata"]["smart_chunk"]["llm_refined"] is False
+
+
+def test_refine_with_llm_retries_and_uses_recovered_response() -> None:
+    llm = FlakyLLM()
+    builder = SmartChunkBuilder(
+        enable_llm_refine=True,
+        llm=llm,
+        llm_max_retries=2,
+    )
+
+    result = builder.transform([_chunk(0, "Short chunk that should be refined")])
+
+    assert result[0]["content"] == "Recovered refined chunk."
+    assert result[0]["metadata"]["refined_by"] == "llm"
+    assert len(llm.calls) == 2

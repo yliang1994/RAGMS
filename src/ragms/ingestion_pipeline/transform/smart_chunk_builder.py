@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import hashlib
 import re
 from typing import Any
 
-from ragms.libs.abstractions import BaseTransform
+from ragms.ingestion_pipeline.transform.services.metadata_service import extract_json_object
+from ragms.libs.abstractions import BaseLLM, BaseTransform
 
 _WORDLIKE_PATTERN = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]")
 _LIST_MARKER_PATTERN = re.compile(r"^(?:[-*+]|\d+\.)\s+")
@@ -32,9 +34,31 @@ class SmartChunkBuilder(BaseTransform):
         *,
         merge_below_chars: int = 100,
         max_merged_chars: int = 1200,
+        enable_llm_refine: bool = False,
+        llm: BaseLLM | None = None,
+        llm_model: str | None = None,
+        llm_system_prompt: str = (
+            "You are a document chunk refinement engine. "
+            "Return strict JSON only with keys content and rationale."
+        ),
+        llm_prompt_template: str = (
+            "Refine the chunk into a self-contained semantic unit while preserving meaning. "
+            "Do not invent facts. Respond with JSON only."
+        ),
+        llm_prompt_version: str = "smart_chunk_refine_v1",
+        llm_timeout_seconds: float = 30.0,
+        llm_max_retries: int = 1,
     ) -> None:
         self.merge_below_chars = merge_below_chars
         self.max_merged_chars = max_merged_chars
+        self.enable_llm_refine = enable_llm_refine
+        self._llm = llm
+        self.llm_model = llm_model
+        self.llm_system_prompt = llm_system_prompt
+        self.llm_prompt_template = llm_prompt_template
+        self.llm_prompt_version = llm_prompt_version
+        self.llm_timeout_seconds = llm_timeout_seconds
+        self.llm_max_retries = max(llm_max_retries, 1)
 
     def transform(
         self,
@@ -44,8 +68,10 @@ class SmartChunkBuilder(BaseTransform):
     ) -> list[dict[str, Any]]:
         """Apply denoising before contextual rewrite."""
 
-        del context
-        return self.rewrite(self.denoise(chunks))
+        refined = self.rewrite(self.denoise(chunks))
+        if not self.enable_llm_refine:
+            return refined
+        return self.refine_with_llm(refined, context=context)
 
     def denoise(self, chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Remove obvious noise lines and drop chunks that become empty."""
@@ -94,6 +120,61 @@ class SmartChunkBuilder(BaseTransform):
                 index += 1
             rewritten.append(self._merge_group(group))
         return rewritten
+
+    def refine_with_llm(
+        self,
+        chunks: list[dict[str, Any]],
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Apply optional LLM refinement on top of rule-refined chunk content."""
+
+        llm = self._llm
+        refined_chunks: list[dict[str, Any]] = []
+        shared_context = dict(context or {})
+
+        for chunk in chunks:
+            item = dict(chunk)
+            metadata = dict(item.get("metadata") or {})
+            smart_chunk = dict(metadata.get("smart_chunk") or {})
+            smart_chunk["prompt_version"] = self.llm_prompt_version
+            model_name = self.llm_model or getattr(llm, "model", None)
+            if model_name:
+                smart_chunk["model"] = str(model_name)
+            metadata["smart_chunk"] = smart_chunk
+            item["metadata"] = metadata
+
+            if llm is None:
+                refined_chunks.append(
+                    self._attach_llm_fallback(item, reason="llm configuration is unavailable")
+                )
+                continue
+
+            prompt = self._build_llm_prompt(item, context=shared_context)
+            try:
+                payload = self._generate_refinement_payload(llm, prompt=prompt)
+                content = self._validate_refined_payload(payload)
+            except Exception as exc:
+                refined_chunks.append(self._attach_llm_fallback(item, reason=str(exc)))
+                continue
+
+            item["content"] = content
+            metadata = dict(item.get("metadata") or {})
+            smart_chunk = dict(metadata.get("smart_chunk") or {})
+            smart_chunk["llm_refined"] = True
+            smart_chunk["prompt_version"] = self.llm_prompt_version
+            if model_name:
+                smart_chunk["model"] = str(model_name)
+            rationale = str(payload.get("rationale") or "").strip()
+            if rationale:
+                smart_chunk["llm_rationale"] = rationale
+            metadata["smart_chunk"] = smart_chunk
+            metadata["refined_by"] = "llm"
+            metadata.pop("fallback_reason", None)
+            item["metadata"] = metadata
+            refined_chunks.append(item)
+
+        return refined_chunks
 
     @classmethod
     def _is_noise_line(cls, line: str) -> bool:
@@ -229,6 +310,62 @@ class SmartChunkBuilder(BaseTransform):
                 if value not in merged_actions:
                     merged_actions.append(value)
         return merged_actions
+
+    def _generate_refinement_payload(self, llm: BaseLLM, *, prompt: str) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for _ in range(self.llm_max_retries):
+            try:
+                response = llm.generate(prompt, system_prompt=self.llm_system_prompt)
+                return extract_json_object(response)
+            except Exception as exc:  # pragma: no cover - exercised through fallback tests
+                last_error = exc
+        if last_error is None:
+            raise ValueError("LLM refinement returned no response")
+        raise last_error
+
+    @staticmethod
+    def _validate_refined_payload(payload: dict[str, Any]) -> str:
+        content = str(payload.get("content") or payload.get("refined_content") or "").strip()
+        if not content:
+            raise ValueError("LLM refinement returned empty content")
+        return content
+
+    def _build_llm_prompt(
+        self,
+        chunk: dict[str, Any],
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> str:
+        metadata = dict(chunk.get("metadata") or {})
+        smart_chunk = dict(metadata.get("smart_chunk") or {})
+        payload = {
+            "instruction": self.llm_prompt_template,
+            "prompt_version": self.llm_prompt_version,
+            "timeout_seconds": self.llm_timeout_seconds,
+            "chunk": {
+                "chunk_id": chunk.get("chunk_id"),
+                "document_id": chunk.get("document_id"),
+                "source_path": chunk.get("source_path"),
+                "content": str(chunk.get("content", "")),
+                "section_path": list(metadata.get("section_path") or []),
+                "rewrite_actions": list(smart_chunk.get("rewrite_actions") or []),
+                "merged_from": list(smart_chunk.get("merged_from") or []),
+            },
+            "context": context or {},
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    @staticmethod
+    def _attach_llm_fallback(chunk: dict[str, Any], *, reason: str) -> dict[str, Any]:
+        updated = dict(chunk)
+        metadata = dict(updated.get("metadata") or {})
+        smart_chunk = dict(metadata.get("smart_chunk") or {})
+        smart_chunk["llm_refined"] = False
+        metadata["smart_chunk"] = smart_chunk
+        metadata["refined_by"] = str(metadata.get("refined_by") or "rule")
+        metadata["fallback_reason"] = reason
+        updated["metadata"] = metadata
+        return updated
 
     def _clean_content(self, content: str) -> tuple[str, dict[str, list[str]]]:
         lines = content.splitlines()
