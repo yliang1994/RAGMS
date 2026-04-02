@@ -67,6 +67,16 @@ class IngestionHistoryRepository:
             raise RuntimeError("Failed to persist ingestion history record")
         return stored
 
+    def delete_by_document_id(self, document_id: str) -> int:
+        """Delete ingestion-history rows belonging to a document id."""
+
+        result = self.connection.execute(
+            "DELETE FROM ingestion_history WHERE document_id = ?",
+            (document_id,),
+        )
+        self.connection.commit()
+        return int(result.rowcount)
+
 
 def _utc_now() -> str:
     """Return an ISO8601 timestamp in UTC."""
