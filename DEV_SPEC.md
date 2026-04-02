@@ -1,6 +1,6 @@
 # DEV_SPEC
 
-Version: `1.0.1`
+Version: `1.0.2`
 
 ## 目录
 
@@ -2683,260 +2683,175 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 - 验收标准：默认配置下可成功装配 Loader、Splitter、LLM、VisionLLM、Embedding、Reranker、VectorStore、Evaluator 等默认组件；容器能返回对应实例并对缺失配置或未知 provider 做统一异常收敛。
 - 测试方法：`pytest tests/integration/test_factory_wiring.py`
 
-#### 阶段 C：Ingestion Pipeline MVP（目标：能把 PDF 样例摄取到本地存储）
+#### 阶段 C：Ingestion Pipeline
 
-> 注：本阶段严格按 5.4.1 的离线数据流落地，并优先实现“增量跳过（SHA256）”。
-> 说明：以下进度按重写后的任务口径重新统计；旧版已完成项仅在备注中做映射，不直接等价继承为完成。
-
-目标：离线摄取链路跑通，能把 PDF 样例文档稳定写入本地元数据存储、向量库、BM25 索引与图片目录，并支持幂等增量。
+目标：离线摄取链路跑通，能把样例文档写入向量库/BM25 索引并支持增量。
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| C1 | 定义核心数据类型/契约（Document / Chunk / ChunkRecord） | [ ] |  | 当前仅有 `Chunk` 模型，`Document` / `ChunkRecord` 契约未收口 |
-| C2 | 文件完整性检查（SHA256） | [x] | 2026-04-02 | 对应旧 C2，sqlite metadata bootstrap / file integrity tests passed |
-| C3 | Loader 抽象基类与 PDF Loader 壳子 | [ ] |  | 现有 `MarkItDownLoader` 可复用，待补齐 PDF 图片契约与降级要求 |
-| C4 | Splitter 集成（调用 Libs） | [ ] |  | 旧 C5 已完成基础切分，待按图片 occurrence / chunk 契约收口 |
-| C5 | Transform 抽象基类 + ChunkRefiner | [ ] |  | 旧 C7 已完成规则增强，待补齐 trace / LLM / 降级闭环 |
-| C6 | MetadataEnricher（规则增强 + 可选 LLM） | [ ] |  | 旧 C8 已完成规则元数据注入，待补齐 contract 与 LLM 增强 |
-| C7 | ImageCaptioner（可选生成 caption + 降级不阻塞） | [ ] |  | 对应旧 C9，尚未实现 |
-| C8 | DenseEncoder（依赖 libs.embedding） | [ ] |  | 对应旧 C10，尚未实现 |
-| C9 | SparseEncoder（BM25 统计与输出契约） | [ ] |  | 对应旧 C11，尚未实现 |
-| C10 | BatchProcessor（批处理编排） | [ ] |  | 旧 spec 缺失，需新增 |
-| C11 | BM25Indexer（倒排索引构建与持久化） | [ ] |  | 旧 C13 仅覆盖到高层描述，需拆成独立任务 |
-| C12 | VectorUpserter（向量存储与幂等性保证） | [ ] |  | 旧 C12 需细化为独立 upsert 任务 |
-| C13 | ImageStorage（图片文件存储与索引表契约） | [ ] |  | 旧 C13 需拆出图片存储子任务 |
-| C14 | Pipeline 编排（MVP 串起来） | [ ] |  | 旧 C1 / C6 仅完成骨架，待打通完整 ingestion MVP |
-| C15 | 脚本入口 `ingest_documents.py`（离线可用） | [ ] |  | 现有脚本入口待按离线验收口径收口 |
+| C1 | 实现 Pipeline 主流程与回调协议 | [x] | 2026-04-02 | pipeline callback tests passed |
+| C1.1 | 实现多模态图片元数据与出现位置建模 | [ ] |  |  |
+| C2 | 实现 SQLite 元数据底座、File Integrity 与摄取历史存储 | [x] | 2026-04-02 | sqlite metadata bootstrap tests passed |
+| C3 | 实现文档注册表与状态流转 | [x] | 2026-04-02 | document registry persistence tests passed |
+| C4 | 实现文档生命周期管理 | [x] | 2026-04-02 | document lifecycle integration tests passed |
+| C5 | 实现 Chunking 切分主流程 | [x] | 2026-04-02 | chunking pipeline tests passed |
+| C6 | 实现 Transform 主编排 | [x] | 2026-04-02 | transform pipeline tests passed |
+| C7 | 实现基于规则的 Chunk 智能重组与去噪 | [x] | 2026-04-02 | smart chunk builder tests passed |
+| C7.1 | 实现可选 LLM Chunk 智能重组 | [ ] |  |  |
+| C8 | 实现基于规则的语义元数据注入 | [x] | 2026-04-02 | metadata injection tests passed |
+| C8.1 | 实现可选 LLM 语义元数据增强 | [ ] |  |  |
+| C9 | 实现图片描述生成 | [ ] |  |  |
+| C10 | 实现 Dense Embedding 编码 | [ ] |  |  |
+| C11 | 实现 Sparse(BM25) 编码与处理优化 | [ ] |  |  |
+| C12 | 实现 Storage 主编排与向量库 Upsert | [ ] |  |  |
+| C13 | 实现 BM25 索引构建与图片文件存储 | [ ] |  |  |
+| C14 | 打通 Ingestion Pipeline 与 CLI 集成链路 | [ ] |  |  |
 
-##### C1 定义核心数据类型/契约（Document / Chunk / ChunkRecord）
+##### C1 实现 Pipeline 主流程与回调协议
 
-- 目标：定义 ingestion → retrieval → MCP tools 共用的数据结构与序列化契约，避免各子模块散落定义导致耦合与字段漂移。
-- 修改文件：`src/ragms/core/models/document.py`（建议新增）、`src/ragms/core/models/chunk.py`、`src/ragms/core/models/chunk_record.py`（建议新增）、`src/ragms/core/models/__init__.py`、`tests/unit/core/models/test_types.py`
-- 实现类/函数：
-  - `Document(document_id, content, source_path, metadata)`
-  - `Chunk(chunk_id, document_id, content, source_path, chunk_index, start_offset, end_offset, image_refs, metadata)`
-  - `ChunkRecord(chunk_id, document_id, content, source_path, metadata, dense_vector?, sparse_vector?, image_captions?)`
-- 契约要求：
-  - 类型必须支持 `dict/json` 序列化，字段顺序与最小必填字段稳定。
-  - `Document` 最少包含 `document_id`、`content`、`source_path`、`metadata`；`metadata` 最少包含 `source_sha256`、`doc_type`、`title`。
-  - `Chunk` 最少包含 `chunk_id`、`document_id`、`content`、`source_path`、`chunk_index`、`start_offset`、`end_offset`、`metadata`；允许保留 `source_ref` 等锚点扩展但不得破坏兼容。
-  - `ChunkRecord` 作为 C8~C13 的存储/检索载体，预留 `dense_vector`、`sparse_vector`、图片 caption 与检索增强字段。
-  - `metadata.images` 字段规范：`List[{"id": str, "path": str, "page": int, "text_offset": int, "text_length": int, "position": dict}]`
-  - 文本中的图片位置统一使用 `[IMAGE: {image_id}]` 占位符；`text_offset` / `text_length` 以 canonical `Document.content` 为基准计数。
-- 验收标准：
-  - 类型序列化稳定且字段兼容性由单元测试锁定。
-  - `metadata.images` 结构、字段名与占位符规则明确，可支撑后续多模态检索与图片落盘。
-  - 同一图片多次出现时，结构仍可准确表示 occurrence。
-- 测试方法：`pytest -q tests/unit/core/models/test_types.py`
+- 目标：建立摄取主流程骨架，支持阶段前后回调、进度通知与错误收敛。
+- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/ingestion_pipeline/callbacks.py`、`tests/unit/ingestion_pipeline/test_pipeline_callbacks.py`
+- 实现类/函数：`IngestionPipeline.run()`、`PipelineCallback.on_stage_start()`、`PipelineCallback.on_stage_end()`
+- 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install pillow rank-bm25 jieba tenacity`，补齐 C 阶段图片处理、BM25 与重试控制所需依赖。
+- 验收标准：主流程可串联各子模块；回调在阶段边界被触发；失败可返回统一错误上下文。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/test_pipeline_callbacks.py`
 
-##### C2 文件完整性检查（SHA256）
+##### C1.1 实现多模态图片元数据与出现位置建模
 
-- 目标：建立基于 SQLite 的文件完整性与摄取历史记录能力，优先保证“同一文件未变更则跳过，变更后可重新处理”。
+- 目标：为 canonical Document 与 Chunk 建立可支撑多模态检索的图片结构化元数据，补齐图片资产信息、占位符出现位置和 Chunk 级图文锚点裁切能力。
+- 修改文件：`src/ragms/libs/providers/loaders/markitdown_loader.py`、`src/ragms/ingestion_pipeline/chunking/split.py`、`src/ragms/core/models/chunk.py`、`tests/unit/libs/providers/test_markitdown_loader.py`、`tests/unit/ingestion_pipeline/chunking/test_split.py`
+- 实现类/函数：`MarkItDownLoader.load()`、`ChunkingPipeline.run()`、`Chunk.from_splitter_chunk()`
+- 数据模型约束：
+  - `CanonicalDocument` 延续当前 dict 形态，不强制额外引入新类；最少包含 `content`、顶层 `source_path`、`metadata`，并保证 `dict/json` 序列化稳定；`metadata` 可镜像保留 `source_path`，但不以 metadata 替代顶层字段。
+  - `Chunk` 延续当前结构化模型，至少包含 `chunk_id`、`document_id`、`content`、`source_path`、`metadata`、`start_offset`、`end_offset`；允许保留 `source_ref` 等扩展锚点但不得破坏现有字段兼容。
+  - `ChunkRecord` 作为后续 C8~C12 的演进载体，在当前阶段只需在规格层明确预留方向，不要求立即引入完整实现；其字段将以 `Chunk` 为基础逐步补充 `dense_vector`、`sparse_vector`、caption 等索引/检索属性。
+- 多模态 metadata 规范：
+  - `metadata` 最少必须包含 `document_id`、`source_sha256` 等稳定锚点；顶层 `source_path` 为必填，metadata 允许镜像扩展但不得移除现有稳定字段。
+  - `metadata.images` 采用图片资产列表，单项至少包含 `id`、`path`、`page`、`position`；其中 `id` 建议采用 `{doc_hash}_{page}_{seq}`，`path` 默认兼容 `data/images/{collection}/{image_id}.png`。
+  - `metadata.image_occurrences` 采用图片出现位置列表，单项至少包含 `image_id`、`text_offset`、`text_length`，必要时可冗余 `page`、`position` 以便回溯。
+  - 文本中的图片位置统一使用 `[IMAGE: {image_id}]` 占位符；`text_offset` 与 `text_length` 以 canonical `Document.content` 为基准计数，用于精确定位并支持同一图片多次出现。
+- 验收标准：`Document.metadata.images` 可稳定输出图片资产列表；`Document.metadata.image_occurrences` 可稳定输出图片出现位置列表；两者字段结构可被 `dict/json` 序列化且单元测试断言稳定；Chunk 级别可基于 `start_offset/end_offset` 精确切出 `image_refs` 与 `metadata.image_occurrences`；结构支持同一图片多次出现；默认 path 约定兼容 `data/images/{collection}/{image_id}.png`。
+- 测试方法：`pytest tests/unit/libs/providers/test_markitdown_loader.py tests/unit/ingestion_pipeline/chunking/test_split.py`
+
+##### C2 实现 SQLite 元数据底座、File Integrity 与摄取历史存储
+
+- 目标：建立摄取链路所需的 SQLite 元数据底座，并支持 SHA256 增量判断和未变更跳过。
 - 修改文件：`src/ragms/storage/sqlite/connection.py`、`src/ragms/storage/sqlite/schema.py`、`src/ragms/storage/sqlite/migrations/`、`src/ragms/storage/sqlite/repositories/ingestion_history.py`、`src/ragms/ingestion_pipeline/file_integrity.py`、`tests/unit/ingestion_pipeline/test_file_integrity.py`、`tests/integration/test_ingestion_metadata_bootstrap.py`
-- 实现类/函数：
-  - `FileIntegrity.compute_sha256(path)`
-  - `FileIntegrity.should_skip(file_hash)`
-  - `FileIntegrity.mark_success(file_hash, file_path, ...)`
-  - `FileIntegrity.mark_failed(file_hash, error_msg)`
-  - `IngestionHistoryRepository`
-- 验收标准：
-  - 同一文件多次计算 hash 结果一致。
-  - 标记 success 后再次摄取返回 skip。
-  - 默认配置下自动创建并初始化 `data/metadata/ragms.db`。
-  - SQLite 使用 WAL 模式，支持并发读写。
+- 实现类/函数：`create_sqlite_connection()`、`initialize_metadata_schema()`、`run_sqlite_migrations()`、`FileIntegrity.compute_sha256()`、`FileIntegrity.should_skip()`、`IngestionHistoryRepository`
+- 验收标准：默认配置下可初始化 `data/metadata/ragms.db` 及其基础 schema；`ingestion_history` 可读写；相同文件内容重复摄取会被跳过；内容变化会触发重新处理。
 - 测试方法：`pytest tests/unit/ingestion_pipeline/test_file_integrity.py tests/integration/test_ingestion_metadata_bootstrap.py`
 
-##### C3 Loader 抽象基类与 PDF Loader 壳子
+##### C3 实现文档注册表与状态流转
 
-- 目标：在现有 `BaseLoader` / `MarkItDownLoader` 基础上收口 PDF canonical loader 契约，确保 PDF 可被统一转换为 `Document` 并具备图片占位与降级语义。
-- 修改文件：`src/ragms/libs/abstractions/base_loader.py`、`src/ragms/libs/providers/loaders/markitdown_loader.py`、`tests/unit/libs/providers/test_markitdown_loader.py`
-- 实现类/函数：
-  - `BaseLoader.load(source_path, metadata?)`
-  - `MarkItDownLoader.load(source_path, metadata?)`
-  - `MarkItDownLoader._extract_text_content(...)`
-  - 需要时补充 `_extract_pdf_images(...)` 或等价 helper
-- 验收标准：
-  - sample PDF 能产出 canonical `Document`，`metadata` 至少包含 `source_path`、`source_sha256`、`doc_type`、`title`。
-  - 若 PDF 含图片，应在 `Document.content` 中插入 `[IMAGE: {image_id}]` 占位符，并在 `metadata.images` 中写入图片资产信息。
-  - 若 PDF 无图片，则 `metadata.images` 为空列表或省略该字段。
-  - 图片提取失败不阻塞文本解析，仅记录 warning 并继续返回文本结果。
-- 测试方法：`pytest -q tests/unit/libs/providers/test_markitdown_loader.py`
+- 目标：建立以 SQLite `documents` 元数据表为落点的摄取文档注册表，记录状态、来源、哈希、时间戳与当前处理阶段。
+- 修改文件：`src/ragms/ingestion_pipeline/lifecycle/document_registry.py`、`src/ragms/storage/sqlite/repositories/documents.py`、`tests/unit/ingestion_pipeline/lifecycle/test_document_registry.py`、`tests/integration/test_document_registry_persistence.py`
+- 实现类/函数：`DocumentRegistry.register()`、`DocumentRegistry.update_status()`、`DocumentsRepository`
+- 验收标准：文档可完成注册、状态迁移与来源查询；注册信息会持久化到 `documents` 表；非法状态跳转会被拦截；重新启动后可恢复最近状态。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/lifecycle/test_document_registry.py tests/integration/test_document_registry_persistence.py`
 
-##### C4 Splitter 集成（调用 Libs）
+##### C4 实现文档生命周期管理
 
-- 目标：实现 `libs.splitter` 与 ingestion 业务对象之间的适配层，完成 `Document -> List[Chunk]` 的稳定转换。
-- 修改文件：`src/ragms/ingestion_pipeline/chunking/split.py`、`src/ragms/core/models/chunk.py`、`tests/unit/ingestion_pipeline/chunking/test_split.py`
-- 实现类/函数：
-  - `ChunkingPipeline.run(document)`
-  - `Chunk.from_splitter_chunk(...)`
-  - 需要时补充 `_generate_chunk_id(...)`、`_slice_image_occurrences(...)`
-- 核心职责：
-  - 为每个 chunk 生成唯一且确定性的 `chunk_id`
-  - 继承 `Document.metadata` 并补齐 `chunk_index`
-  - 通过 `document_id` / `source_path` 建立 chunk 溯源
-  - 依据 `[IMAGE: {image_id}]` 和 `start_offset / end_offset` 将文档级图片 occurrence 精确裁切到 chunk 级 `image_refs` / `metadata.image_occurrences`
-- 验收标准：
-  - 切分参数变化会影响 chunk 数量和长度。
-  - 同一文档重复切分得到稳定一致的 `chunk_id` 序列。
-  - `Chunk.metadata` 保留文档级稳定字段，图片引用只保留该 chunk 实际命中的子集。
-  - 输出 `Chunk` 满足 C1 契约并可直接进入 Transform / Storage 阶段。
-- 测试方法：`pytest -q tests/unit/ingestion_pipeline/chunking/test_split.py`
+- 目标：实现摄取侧文档重建、删除与状态恢复编排，并与 `documents` / `ingestion_history` / 图片索引等持久化状态联动。
+- 修改文件：`src/ragms/ingestion_pipeline/lifecycle/lifecycle_manager.py`、`tests/unit/ingestion_pipeline/lifecycle/test_lifecycle_manager.py`、`tests/integration/test_document_lifecycle_integration.py`
+- 实现类/函数：`IngestionDocumentManager.rebuild()`、`IngestionDocumentManager.delete()`
+- 验收标准：文档可触发重建与删除；生命周期操作能驱动注册表、`documents` 元数据、`ingestion_history` 与存储层联动，保证删除/重建后状态一致。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/lifecycle/test_lifecycle_manager.py tests/integration/test_document_lifecycle_integration.py`
 
-##### C5 Transform 抽象基类 + ChunkRefiner（规则去噪 + LLM 增强）
+##### C5 实现 Chunking 切分主流程
 
-- 目标：定义 Transform 抽象接口，并实现 `ChunkRefiner` 作为 Transform 阶段的首个增强组件，先做规则去噪，再可选调用 LLM 进行智能精炼。
-- 前置条件：
-  - 在 `settings.yaml` 中配置可用 LLM provider / model / api_key。
-  - 补齐对应环境变量，并实际执行真实 LLM 集成验证。
-- 修改文件：`src/ragms/libs/abstractions/base_transform.py`、`src/ragms/ingestion_pipeline/transform/chunk_refiner.py`（建议新增）、`src/ragms/core/trace/trace_context.py`（建议新增，占位实现）、`config/prompts/chunk_refinement.txt`（如后续引入）、`tests/fixtures/noisy_chunks.json`（建议新增）、`tests/unit/ingestion_pipeline/transform/test_chunk_refiner.py`、`tests/integration/test_chunk_refiner_llm.py`
-- 实现类/函数：
-  - `BaseTransform.transform(chunks, trace)`
-  - `ChunkRefiner.transform(chunks, trace)`
-  - `ChunkRefiner._rule_based_refine(text)`
-  - `ChunkRefiner._llm_refine(text, trace)`
-- 验收标准：
-  - 规则模式可清理连续空白、页眉页脚、格式标记等典型噪声。
-  - 代码块、Markdown 结构等有效内容不会被过度清理。
-  - LLM 模式打开时能够真实调用模型并输出更干净文本。
-  - LLM 失败、超时、配置缺失时自动回退到规则结果，不阻塞 ingestion。
-- 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_chunk_refiner.py tests/integration/test_chunk_refiner_llm.py -v`
+- 目标：将文档稳定切分为带定位、图片引用与图片出现位置锚点的 chunk。
+- 修改文件：`src/ragms/core/models/chunk.py`、`src/ragms/ingestion_pipeline/chunking/split.py`、`tests/unit/ingestion_pipeline/chunking/test_split.py`
+- 实现类/函数：`ChunkingPipeline.run()`、`Chunk.build_id()`
+- 验收标准：chunk 数量、offset、`image_refs`、`metadata.image_occurrences`、`chunk_id` 稳定性符合预期；Document 级图片 occurrence 可被按 chunk 边界精确裁切。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/chunking/test_split.py`
 
-##### C6 MetadataEnricher（规则增强 + 可选 LLM 增强 + 降级）
+##### C6 实现 Transform 主编排
 
-- 目标：实现元数据增强模块，为 chunk 生成 `title`、`summary`、`tags` 等语义 metadata，默认规则增强，可选叠加 LLM 增强。
+- 目标：编排 Transform 阶段内部增强步骤，形成统一的 Smart Chunk 输出。
+- 修改文件：`src/ragms/ingestion_pipeline/transform/pipeline.py`、`tests/unit/ingestion_pipeline/transform/test_pipeline.py`
+- 实现类/函数：`TransformPipeline.run()`
+- 验收标准：Transform 可按顺序执行重组、元数据注入、图片描述等步骤；单个步骤失败时具备可控降级行为。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_pipeline.py`
+
+##### C7 实现基于规则的 Chunk 智能重组与去噪
+
+- 目标：以纯规则模式对切分后的 chunk 进行智能拼接、去噪与上下文修复，作为默认离线可用的基线增强能力。
+- 修改文件：`src/ragms/ingestion_pipeline/transform/smart_chunk_builder.py`、`tests/unit/ingestion_pipeline/transform/test_smart_chunk_builder.py`
+- 实现类/函数：`SmartChunkBuilder.rewrite()`、`SmartChunkBuilder.denoise()`
+- 验收标准：噪声段落会被清理；邻近上下文可按规则合并；输出结构保持稳定。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_smart_chunk_builder.py`
+
+##### C7.1 实现可选 LLM Chunk 智能重组
+
+- 目标：在 C7 规则增强基线之上，实现可选 LLM 智能重组，利用 LLM 对 chunk 做更高质量的语义拼接、去噪与上下文修复，同时不破坏 ingestion 的稳定性。
+- 修改文件：`src/ragms/ingestion_pipeline/transform/smart_chunk_builder.py`、`src/ragms/ingestion_pipeline/transform/services/metadata_service.py`、`tests/unit/ingestion_pipeline/transform/test_smart_chunk_builder.py`、`tests/integration/test_smart_chunk_builder_llm.py`
+- 实现类/函数：`SmartChunkBuilder.rewrite()`、`SmartChunkBuilder.refine_with_llm()`
+- 验收标准：在开启 LLM 模式时，系统会真实调用 LLM（或高质量 Mock）生成语义更完整的 chunk；在存在真实 LLM 配置时需验证连通性与输出效果；当 LLM 调用失败、超时、配置缺失或返回异常时，自动回退到规则模式结果，并可在 metadata 中记录降级原因，但不抛出致命异常。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_smart_chunk_builder.py tests/integration/test_smart_chunk_builder_llm.py`
+
+##### C8 实现基于规则的语义元数据注入
+
+- 目标：以纯规则模式为 chunk 注入 Title、Summary、Tags 等语义元数据，作为默认离线可用的基线增强能力。
+- 修改文件：`src/ragms/ingestion_pipeline/transform/metadata_injection.py`、`src/ragms/ingestion_pipeline/transform/services/metadata_service.py`、`tests/unit/ingestion_pipeline/transform/test_metadata_injection.py`
+- 实现类/函数：`inject_semantic_metadata()`、`MetadataService.enrich()`
+- 验收标准：元数据可被稳定注入到 chunk；无标题或短文本场景处理明确。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_metadata_injection.py`
+
+##### C8.1 实现可选 LLM 语义元数据增强
+
+- 目标：在 C8 规则增强基线之上，实现可选 LLM 元数据增强，利用 LLM 对 chunk 生成高质量的 `Title`、`Summary` 和 `Tags`，同时不破坏 ingestion 的稳定性。
 - 修改文件：`src/ragms/ingestion_pipeline/transform/metadata_injection.py`、`src/ragms/ingestion_pipeline/transform/services/metadata_service.py`、`tests/unit/ingestion_pipeline/transform/test_metadata_injection.py`、`tests/integration/test_metadata_injection_llm.py`
-- 实现类/函数：
-  - `inject_semantic_metadata()`
-  - `MetadataService.enrich()`
-  - `MetadataService.enrich_with_llm()`
-- 验收标准：
-  - 规则模式至少稳定输出非空的 `title` / `summary` / `tags`。
-  - LLM 模式开启时，真实调用模型并生成更高质量的语义 metadata。
-  - LLM 失败时回退到规则模式结果，可记录降级原因但不得抛出致命异常。
+- 实现类/函数：`inject_semantic_metadata()`、`MetadataService.enrich()`、`MetadataService.enrich_with_llm()`
+- 验收标准：在开启 LLM 模式时，系统会真实调用 LLM（或高质量 Mock）生成语义更丰富的 metadata；在存在真实 LLM 配置时需验证连通性与输出效果；当 LLM 调用失败、超时、配置缺失或返回异常时，自动回退到规则模式结果，并可在 metadata 中记录降级原因，但不抛出致命异常。
 - 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_metadata_injection.py tests/integration/test_metadata_injection_llm.py`
 
-##### C7 ImageCaptioner（可选生成 caption + 降级不阻塞）
+##### C9 实现图片描述生成
 
-- 目标：在存在 `image_refs` 时调用 Vision LLM 生成图片描述，并将 caption 写回 chunk metadata；当能力不可用时优雅降级。
-- 修改文件：`src/ragms/ingestion_pipeline/transform/image_captioning.py`、`src/ragms/storage/sqlite/repositories/processing_cache.py`（建议新增）、`config/prompts/image_captioning.txt`（如后续引入）、`tests/unit/ingestion_pipeline/transform/test_image_captioning.py`
-- 实现类/函数：
-  - `inject_image_caption()`
-  - `generate_image_caption()`
-  - `ProcessingCacheRepository`
-- 验收标准：
-  - 启用模式下，多图 / 单图场景能生成 caption 并正确绑定到目标 chunk。
-  - 同一图片内容且 prompt 版本未变化时可复用缓存结果。
-  - 禁用或异常时保留 `image_refs`，标记 `has_unprocessed_images`，不阻塞主流程。
-- 测试方法：`pytest -q tests/unit/ingestion_pipeline/transform/test_image_captioning.py`
+- 目标：基于 `metadata.images` 与 `metadata.image_occurrences` 调用 Vision LLM 为图片生成 caption，并按 occurrence 精确注入到关联 chunk，同时支持基于 `processing_cache` 的幂等复用。
+- 修改文件：`src/ragms/ingestion_pipeline/transform/image_captioning.py`、`src/ragms/storage/sqlite/repositories/processing_cache.py`、`tests/unit/ingestion_pipeline/transform/test_image_captioning.py`
+- 实现类/函数：`inject_image_caption()`、`generate_image_caption()`、`ProcessingCacheRepository`
+- 验收标准：单图、多图、无图场景均可处理；caption 可基于 `image_refs` 与 `image_occurrences` 准确绑定到目标 chunk/占位符；相同图片内容且 Prompt 版本未变化时可复用缓存描述；Vision LLM 不可用时具备明确降级策略。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/transform/test_image_captioning.py`
 
-##### C8 DenseEncoder（依赖 libs.embedding）
+##### C10 实现 Dense Embedding 编码
 
-- 目标：实现稠密向量编码器，将 chunk 文本批量送入 `BaseEmbedding`，为后续 `ChunkRecord.dense_vector` 提供稳定输出。
+- 目标：完成稠密向量编码与批处理编排，并为 `ChunkRecord.dense_vector` 提供稳定产出。
 - 修改文件：`src/ragms/ingestion_pipeline/embedding/dense_encoder.py`、`tests/unit/ingestion_pipeline/embedding/test_dense_encoder.py`
 - 实现类/函数：`DenseEncoder.encode_documents()`、`DenseEncoder.encode_query()`
-- 验收标准：
-  - 输出向量数量与输入 chunk 数量一致，维度稳定。
-  - 空输入、provider 异常、部分失败等边界行为明确。
-  - 结果可稳定映射回 chunk / `ChunkRecord`。
-- 测试方法：`pytest -q tests/unit/ingestion_pipeline/embedding/test_dense_encoder.py`
+- 验收标准：文本可批量编码为稳定向量；结果可映射回后续 `ChunkRecord` 载体；空输入与异常响应场景可被正确处理。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/embedding/test_dense_encoder.py`
 
-##### C9 SparseEncoder（BM25 统计与输出契约）
+##### C11 实现 Sparse(BM25) 编码与处理优化
 
-- 目标：实现稀疏编码器，产出可直接喂给 BM25Indexer 的 term statistics / 权重结构，并明确空文本与中文分词行为。
-- 修改文件：`src/ragms/ingestion_pipeline/embedding/sparse_encoder.py`、`tests/unit/ingestion_pipeline/embedding/test_sparse_encoder.py`
-- 实现类/函数：`SparseEncoder.encode()`
-- 验收标准：
-  - 输出结构包含后续倒排索引所需的 term、tf、doc_length 等统计信息。
-  - 对空文本、停用词、中文分词失败等场景有稳定输出或明确降级。
-  - 输出结果可稳定映射回 `ChunkRecord.sparse_vector` 或等价结构。
-- 测试方法：`pytest -q tests/unit/ingestion_pipeline/embedding/test_sparse_encoder.py`
+- 目标：完成 BM25 稀疏编码、批处理优化、缓存与并发控制，并为 `ChunkRecord.sparse_vector` 或等价稀疏表示提供稳定产出。
+- 修改文件：`src/ragms/ingestion_pipeline/embedding/sparse_encoder.py`、`src/ragms/ingestion_pipeline/embedding/optimization.py`、`tests/unit/ingestion_pipeline/embedding/test_sparse_encoder.py`、`tests/unit/ingestion_pipeline/embedding/test_optimization.py`
+- 实现类/函数：`SparseEncoder.encode()`、`optimize_embedding_batches()`
+- 验收标准：BM25 token/term 结果稳定；结果可映射回后续 `ChunkRecord` 载体；大批量输入可按批次处理；优化逻辑不改变编码结果语义。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/embedding/test_sparse_encoder.py tests/unit/ingestion_pipeline/embedding/test_optimization.py`
 
-##### C10 BatchProcessor（批处理编排）
+##### C12 实现 Storage 主编排与向量库 Upsert
 
-- 目标：新增 embedding 批处理编排器，负责将 chunks 分 batch 驱动 dense / sparse 编码，并记录批次级别耗时与失败边界。
-- 修改文件：`src/ragms/ingestion_pipeline/embedding/batch_processor.py`（建议新增）、`tests/unit/ingestion_pipeline/embedding/test_batch_processor.py`
-- 实现类/函数：
-  - `BatchProcessor.process(chunks, batch_size, handlers)`
-  - `BatchProcessor._iter_batches(...)`
-- 验收标准：
-  - `batch_size=2` 时对 5 个 chunk 分成 3 批且顺序稳定。
-  - 单批失败不影响前序已完成批次的结果记录与 trace。
-  - Dense / Sparse 路径可共享同一批处理编排能力。
-- 测试方法：`pytest -q tests/unit/ingestion_pipeline/embedding/test_batch_processor.py`
+- 目标：编排摄取结果写入流程，将增强后的 Chunk 组装为 `ChunkRecord`，并完成向量库写入。
+- 修改文件：`src/ragms/ingestion_pipeline/storage/pipeline.py`、`src/ragms/ingestion_pipeline/storage/vector_upsert.py`、`tests/unit/ingestion_pipeline/storage/test_pipeline.py`、`tests/unit/ingestion_pipeline/storage/test_vector_upsert.py`
+- 实现类/函数：`StoragePipeline.run()`、`VectorUpsert.write()`、`ChunkRecordBuilder.build()`
+- 验收标准：Dense 向量、Sparse 表示、chunk 与 metadata 可统一组装为稳定 `ChunkRecord` 并写入；重复写入保持幂等；图片相关 metadata 不在 storage 阶段丢失。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/storage/test_pipeline.py tests/unit/ingestion_pipeline/storage/test_vector_upsert.py`
 
-##### C11 BM25Indexer（倒排索引构建与持久化）
+##### C13 实现 BM25 索引构建与图片文件存储
 
-- 目标：接收 SparseEncoder 的统计输出，计算 IDF、构建倒排索引并持久化到本地文件系统。
-- 修改文件：`src/ragms/storage/indexes/bm25_indexer.py`（建议新增）、`src/ragms/ingestion_pipeline/storage/bm25_indexing.py`（建议新增）、`tests/unit/ingestion_pipeline/storage/test_bm25_indexing.py`
-- 实现类/函数：
-  - `BM25Indexer.build(...)`
-  - `BM25Indexer.load(...)`
-  - `BM25StorageWriter.index()`
-- 验收标准：
-  - 能根据语料计算正确 IDF，并构建 `{term: {idf, postings}}` 结构。
-  - 索引持久化后可再次加载并对同一语料返回稳定 top ids。
-  - 支持重建和增量更新两种路径。
-- 测试方法：`pytest -q tests/unit/ingestion_pipeline/storage/test_bm25_indexing.py`
+- 目标：完成 BM25 索引更新、图片文件落盘与 `images` 索引表写入。
+- 修改文件：`src/ragms/ingestion_pipeline/storage/bm25_indexing.py`、`src/ragms/ingestion_pipeline/storage/image_persistence.py`、`src/ragms/storage/indexes/bm25_indexer.py`、`src/ragms/storage/images/image_storage.py`、`src/ragms/storage/sqlite/repositories/images.py`、`tests/unit/ingestion_pipeline/storage/test_bm25_indexing.py`、`tests/unit/ingestion_pipeline/storage/test_image_persistence.py`
+- 实现类/函数：`BM25StorageWriter.index()`、`ImageStorageWriter.save_all()`、`BM25Indexer.index_document()`、`ImagesRepository`
+- 验收标准：BM25 索引可增量更新；图片可稳定落盘、写入 `images` 索引表并与文档/chunk 建立查询关联。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/storage/test_bm25_indexing.py tests/unit/ingestion_pipeline/storage/test_image_persistence.py`
 
-##### C12 VectorUpserter（向量存储与幂等性保证）
+##### C14 打通 Ingestion Pipeline 与 CLI 集成链路
 
-- 目标：实现独立的向量 upsert 组件，将 DenseEncoder 输出写入向量库，并保证同一 chunk 多次写入保持幂等。
-- 修改文件：`src/ragms/ingestion_pipeline/storage/vector_upsert.py`、`src/ragms/ingestion_pipeline/storage/pipeline.py`、`tests/unit/ingestion_pipeline/storage/test_vector_upsert.py`
-- 实现类/函数：
-  - `VectorUpsert.write()`
-  - `ChunkRecordBuilder.build()`
-  - 需要时补充 `build_stable_chunk_id(...)`
-- 验收标准：
-  - 同一 chunk 两次 upsert 产生相同稳定 id。
-  - 内容变化时 id 或更新版本发生变化。
-  - 支持批量 upsert，且结果顺序与输入顺序一致。
-- 测试方法：`pytest -q tests/unit/ingestion_pipeline/storage/test_vector_upsert.py`
-
-##### C13 ImageStorage（图片文件存储与索引表契约）
-
-- 目标：将图片资产写入 `data/images/`，并通过 SQLite 记录 `image_id -> file_path` 映射，为检索与返回阶段提供稳定寻址能力。
-- 修改文件：`src/ragms/storage/images/image_storage.py`（建议新增）、`src/ragms/storage/sqlite/repositories/images.py`（建议新增）、`src/ragms/ingestion_pipeline/storage/image_persistence.py`（建议新增）、`tests/unit/ingestion_pipeline/storage/test_image_persistence.py`
-- 实现类/函数：
-  - `ImageStorage.save(...)`
-  - `ImageStorage.resolve(image_id)`
-  - `ImagesRepository`
-  - `ImageStorageWriter.save_all()`
-- 数据约束：
-  - 默认落盘目录为 `data/images/{collection}/`
-  - 索引表最少包含 `image_id`、`file_path`、`collection`、`doc_hash`、`page_num`、`created_at`
-  - SQLite 使用 WAL 模式，支持并发访问
-- 验收标准：
-  - 图片保存后文件存在，按 `image_id` 能查回正确路径。
-  - 映射关系持久化在 SQLite 索引表中，并支持按 collection / doc_hash 查询。
-  - 图片重复保存时具备幂等行为。
-- 测试方法：`pytest -q tests/unit/ingestion_pipeline/storage/test_image_persistence.py`
-
-##### C14 Pipeline 编排（MVP 串起来）
-
-- 目标：实现完整 ingestion MVP 编排，串行执行 integrity -> load -> split -> transform -> encode -> store，并对失败步骤输出清晰异常与阶段进度。
-- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/ingestion_pipeline/callbacks.py`、`tests/integration/test_ingestion_pipeline.py`、`tests/integration/test_ingestion_pipeline_storage.py`
-- 实现类/函数：
-  - `IngestionPipeline.run()`
-  - `PipelineCallback.on_stage_start()`
-  - `PipelineCallback.on_stage_end()`
-- 验收标准：
-  - 对 sample PDF 跑完整 pipeline，成功输出向量库记录、BM25 索引、图片落盘与 SQLite 元数据。
-  - 日志和 callback 能清晰展示阶段进度与失败位置。
-  - 单阶段失败时抛出明确异常信息，并保留足够上下文用于定位。
-- 测试方法：`pytest tests/integration/test_ingestion_pipeline.py tests/integration/test_ingestion_pipeline_storage.py -v`
-
-##### C15 脚本入口 `ingest_documents.py`（离线可用）
-
-- 目标：提供离线 CLI 入口，支持 `--collection`、`--path`、`--force` 等参数，并直接驱动 C14 的 pipeline。
-- 修改文件：`scripts/ingest_documents.py`、`tests/e2e/test_data_ingestion.py`
-- 实现类/函数：
-  - `ingest_documents_main()`
-  - `parse_args()` 或等价 CLI 参数解析入口
-- 验收标准：
-  - 命令行可对样例 PDF 执行完整入库流程，并在本地产生 `data/db`、`data/images` 与向量库产物。
-  - 重复执行未变更文件时命中 skip；使用 `--force` 时可强制重跑。
-  - 尽量使用临时目录进行 E2E，保证本地可重复执行。
-- 测试方法：`pytest -q tests/e2e/test_data_ingestion.py`
+- 目标：完成离线摄取主编排器、CLI 入口与存储集成测试。
+- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`scripts/ingest_documents.py`、`tests/integration/test_ingestion_pipeline.py`、`tests/integration/test_ingestion_pipeline_storage.py`
+- 实现类/函数：`IngestionPipeline.run()`、`ingest_documents_main()`
+- 验收标准：样例 PDF 能从 CLI 完整入库；增量跳过生效；Chroma/BM25/图片存储集成通过。
+- 测试方法：`pytest tests/integration/test_ingestion_pipeline.py tests/integration/test_ingestion_pipeline_storage.py`
 
 #### 阶段 D：Retrieval（Query Processor + Dense/Sparse + RRF + Rerank）
 
