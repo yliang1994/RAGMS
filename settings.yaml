@@ -15,6 +15,17 @@ embedding:
   provider: openai
   model: text-embedding-3-small
 
+vision_llm:
+  provider: auto
+  model: gpt-4.1-mini
+  language_providers:
+    zh: qwen_vl
+    en: gpt4o
+  environment_providers:
+    development: qwen_vl
+    test: qwen_vl
+    production: gpt4o
+
 vector_store:
   backend: chroma
   collection: default
@@ -37,4 +48,3 @@ dashboard:
   enabled: true
   port: 8501
   traces_file: logs/traces.jsonl
-

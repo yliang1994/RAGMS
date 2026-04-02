@@ -40,6 +40,25 @@ class EmbeddingSettings(StrictModel):
     api_key: str | None = None
 
 
+class VisionLLMSettings(StrictModel):
+    """Vision-language model configuration with optional routing hints."""
+
+    provider: Literal["auto", "gpt4o", "qwen_vl"] = "auto"
+    model: str = "gpt-4.1-mini"
+    api_key: str | None = None
+    base_url: str | None = None
+    language_providers: dict[str, Literal["gpt4o", "qwen_vl"]] = Field(
+        default_factory=lambda: {"zh": "qwen_vl", "en": "gpt4o"}
+    )
+    environment_providers: dict[str, Literal["gpt4o", "qwen_vl"]] = Field(
+        default_factory=lambda: {
+            "development": "qwen_vl",
+            "test": "qwen_vl",
+            "production": "gpt4o",
+        }
+    )
+
+
 class VectorStoreSettings(StrictModel):
     """Vector store backend selection."""
 
@@ -85,9 +104,9 @@ class AppSettings(StrictModel):
     paths: PathSettings = Field(default_factory=PathSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
+    vision_llm: VisionLLMSettings = Field(default_factory=VisionLLMSettings)
     vector_store: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     dashboard: DashboardSettings = Field(default_factory=DashboardSettings)
-
