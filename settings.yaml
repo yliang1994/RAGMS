@@ -30,6 +30,10 @@ vector_store:
   backend: chroma
   collection: default
 
+storage:
+  sqlite:
+    path: data/metadata/ragms.db
+
 retrieval:
   strategy: hybrid
   fusion_algorithm: rrf

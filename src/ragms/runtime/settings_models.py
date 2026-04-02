@@ -80,6 +80,18 @@ class EvaluationSettings(StrictModel):
     backends: list[str] = Field(default_factory=lambda: ["custom_metrics"])
 
 
+class SQLiteStorageSettings(StrictModel):
+    """SQLite metadata storage configuration."""
+
+    path: Path = Path("data/metadata/ragms.db")
+
+
+class StorageSettings(StrictModel):
+    """Storage backend configuration used by ingestion and management flows."""
+
+    sqlite: SQLiteStorageSettings = Field(default_factory=SQLiteStorageSettings)
+
+
 class ObservabilitySettings(StrictModel):
     """Trace and application logging settings."""
 
@@ -108,5 +120,6 @@ class AppSettings(StrictModel):
     vector_store: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
+    storage: StorageSettings = Field(default_factory=StorageSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     dashboard: DashboardSettings = Field(default_factory=DashboardSettings)
