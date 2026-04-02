@@ -7,7 +7,7 @@ from typing import Any
 
 
 class BaseEvaluator(ABC):
-    """Evaluate model predictions and return a stable metrics dictionary."""
+    """Evaluate predictions and return normalized metrics as ``dict[str, float]``."""
 
     @abstractmethod
     def evaluate(
@@ -17,5 +17,4 @@ class BaseEvaluator(ABC):
         *,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, float]:
-        """Evaluate predictions against references and return metrics."""
-
+        """Evaluate predictions against references and return standardized metrics."""

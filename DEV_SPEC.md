@@ -2446,7 +2446,7 @@ dashboard:
 | 阶段 | 总任务数 | 已完成 | 进度 |
 |------|---------|--------|------|
 | 阶段 A | 5 | 5 | 100% |
-| 阶段 B | 15 | 13 | 87% |
+| 阶段 B | 15 | 14 | 93% |
 | 阶段 C | 14 | 0 | 0% |
 | 阶段 D | 8 | 0 | 0% |
 | 阶段 E | 9 | 0 | 0% |
@@ -2454,7 +2454,7 @@ dashboard:
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **79** | **18** | **22.8%** |
+| **总计** | **79** | **19** | **24.1%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2533,7 +2533,7 @@ dashboard:
 | B4.8 | 落地 Cross-Encoder Reranker provider | [x] | 2026-04-02 | cross encoder reranker tests passed |
 | B4.9 | 落地 LLM Reranker provider | [x] | 2026-04-02 | llm reranker provider tests passed |
 | B4.10 | 落地 Chroma VectorStore provider | [x] | 2026-04-02 | chroma store provider tests passed |
-| B5 | 落地 Evaluator 抽象与工厂 | [ ] |  |  |
+| B5 | 落地 Evaluator 抽象与工厂 | [x] | 2026-04-02 | evaluator factory tests passed |
 | B6 | 完成工厂装配集成冒烟 | [ ] |  |  |
 
 Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .embedding_factory import EmbeddingFactory
+from .evaluator_factory import EvaluatorFactory
 from .llm_factory import LLMFactory
 from .loader_factory import LoaderFactory
 from .reranker_factory import RerankerFactory
@@ -12,6 +13,7 @@ from .vision_llm_factory import VisionLLMFactory
 
 __all__ = [
     "EmbeddingFactory",
+    "EvaluatorFactory",
     "LLMFactory",
     "LoaderFactory",
     "RerankerFactory",
