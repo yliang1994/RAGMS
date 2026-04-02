@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 from ragms.ingestion_pipeline.transform import SemanticMetadataInjector, inject_semantic_metadata
 from ragms.ingestion_pipeline.transform.services import MetadataService
+from tests.fakes.fake_llm import FakeLLM
 
 
 def _chunk(content: str, *, metadata: dict[str, object] | None = None) -> dict[str, object]:
@@ -119,3 +122,96 @@ def test_injector_keeps_chunk_shape_stable() -> None:
         "metadata",
     }
     assert result[0]["content"] == "On-call runbooks describe paging and rollback steps."
+
+
+def test_injector_applies_llm_metadata_enrichment_on_top_of_rule_result() -> None:
+    service = MetadataService(
+        enable_llm_enrich=True,
+        llm=FakeLLM(
+            [
+                json.dumps(
+                    {
+                        "title": "Privileged Access Approval Workflow",
+                        "summary": "Manager review and audit logging govern privileged access approval.",
+                        "tags": ["approval", "access", "audit"],
+                    },
+                    ensure_ascii=False,
+                )
+            ]
+        ),
+        llm_model="fake-llm",
+        llm_prompt_version="semantic_metadata_v2",
+    )
+
+    result = inject_semantic_metadata(
+        [
+            _chunk(
+                "Access control approvals require manager review before production access is granted. "
+                "Audit logging remains mandatory for every privileged action.",
+                metadata={"section_path": ["Security", "Access Control"]},
+            )
+        ],
+        service=service,
+        enable_llm_enrich=True,
+        context={"collection": "demo"},
+    )
+
+    semantic = result[0]["metadata"]["semantic"]
+    assert semantic["title"] == "Privileged Access Approval Workflow"
+    assert semantic["summary"] == (
+        "Manager review and audit logging govern privileged access approval."
+    )
+    assert semantic["tags"] == ["approval", "access", "audit"]
+    assert result[0]["metadata"]["metadata_enriched_by"] == "llm"
+    assert result[0]["metadata"]["prompt_version"] == "semantic_metadata_v2"
+    assert result[0]["metadata"]["model"] == "fake-llm"
+    assert "fallback_reason" not in result[0]["metadata"]
+    assert "Access Control" in str(service._llm.calls[0]["prompt"])
+
+
+def test_injector_falls_back_to_rule_metadata_when_llm_response_is_invalid() -> None:
+    service = MetadataService(
+        enable_llm_enrich=True,
+        llm=FakeLLM(['{"title":"Only title"}']),
+        llm_prompt_version="semantic_metadata_v1",
+    )
+
+    result = inject_semantic_metadata(
+        [_chunk("API quota limits apply to batch jobs.")],
+        service=service,
+        enable_llm_enrich=True,
+    )
+
+    semantic = result[0]["metadata"]["semantic"]
+    assert semantic["title"] == "API quota limits apply to batch jobs."
+    assert semantic["summary"] == "API quota limits apply to batch jobs."
+    assert result[0]["metadata"]["metadata_enriched_by"] == "rule"
+    assert "fallback_reason" in result[0]["metadata"]
+    assert result[0]["metadata"]["prompt_version"] == "semantic_metadata_v1"
+
+
+def test_injector_can_explicitly_disable_llm_enrichment() -> None:
+    service = MetadataService(
+        enable_llm_enrich=True,
+        llm=FakeLLM(
+            [
+                json.dumps(
+                    {
+                        "title": "Should not be used",
+                        "summary": "Should not be used",
+                        "tags": ["unused"],
+                    }
+                )
+            ]
+        ),
+    )
+
+    result = inject_semantic_metadata(
+        [_chunk("API quota limits apply to batch jobs.")],
+        service=service,
+        enable_llm_enrich=False,
+    )
+
+    assert result[0]["metadata"]["semantic"]["title"] == "API quota limits apply to batch jobs."
+    assert result[0]["metadata"]["metadata_enriched_by"] == "rule"
+    assert service._llm.calls == []

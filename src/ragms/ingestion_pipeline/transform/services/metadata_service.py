@@ -8,6 +8,8 @@ import re
 from collections import Counter
 from typing import Any
 
+from ragms.libs.abstractions import BaseLLM
+
 _ENGLISH_TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
 _CJK_TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]{2,}")
 _SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[。！？.!?])\s+")
@@ -43,11 +45,31 @@ class MetadataService:
         max_title_chars: int = 60,
         max_summary_chars: int = 180,
         max_tags: int = 5,
+        enable_llm_enrich: bool = False,
+        llm: BaseLLM | None = None,
+        llm_model: str | None = None,
+        llm_system_prompt: str = (
+            "You enrich chunk metadata. "
+            "Return strict JSON only with keys title, summary, and tags."
+        ),
+        llm_prompt_template: str = (
+            "Improve the provided metadata for retrieval quality. "
+            "Keep it faithful to the chunk text and return JSON only."
+        ),
+        llm_prompt_version: str = "semantic_metadata_v1",
+        llm_max_retries: int = 1,
     ) -> None:
         self.short_text_chars = short_text_chars
         self.max_title_chars = max_title_chars
         self.max_summary_chars = max_summary_chars
         self.max_tags = max_tags
+        self.enable_llm_enrich = enable_llm_enrich
+        self._llm = llm
+        self.llm_model = llm_model
+        self.llm_system_prompt = llm_system_prompt
+        self.llm_prompt_template = llm_prompt_template
+        self.llm_prompt_version = llm_prompt_version
+        self.llm_max_retries = max(llm_max_retries, 1)
 
     def enrich(
         self,
@@ -99,6 +121,38 @@ class MetadataService:
             "path_context": path_context,
             "nearby_context": nearby_context,
         }
+
+    def enrich_with_llm(
+        self,
+        chunk: dict[str, Any],
+        *,
+        base_semantic: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Improve rule-generated metadata through an optional LLM pass."""
+
+        if self._llm is None:
+            raise ValueError("llm configuration is unavailable")
+
+        prompt = self._build_llm_prompt(chunk, base_semantic=base_semantic, context=context)
+        payload = self._generate_llm_payload(prompt)
+
+        title = self._truncate(str(payload.get("title") or "").strip(), self.max_title_chars)
+        summary = self._truncate(str(payload.get("summary") or "").strip(), self.max_summary_chars)
+        tags = self._normalize_tags(payload.get("tags"))
+
+        if not title:
+            raise ValueError("LLM metadata enrichment returned empty title")
+        if not summary:
+            raise ValueError("LLM metadata enrichment returned empty summary")
+        if not tags:
+            raise ValueError("LLM metadata enrichment returned empty tags")
+
+        enriched = dict(base_semantic)
+        enriched["title"] = title
+        enriched["summary"] = summary
+        enriched["tags"] = tags
+        return enriched
 
     def _derive_title(
         self,
@@ -263,6 +317,51 @@ class MetadataService:
         cjk_tokens = _CJK_TOKEN_PATTERN.findall(text)
         merged = english_tokens + cjk_tokens
         return [token for token in merged if token not in _STOPWORDS]
+
+    def _build_llm_prompt(
+        self,
+        chunk: dict[str, Any],
+        *,
+        base_semantic: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> str:
+        payload = {
+            "instruction": self.llm_prompt_template,
+            "prompt_version": self.llm_prompt_version,
+            "chunk": {
+                "chunk_id": chunk.get("chunk_id"),
+                "document_id": chunk.get("document_id"),
+                "source_path": chunk.get("source_path"),
+                "content": str(chunk.get("content", "")),
+            },
+            "base_semantic": {
+                "title": base_semantic.get("title"),
+                "summary": base_semantic.get("summary"),
+                "tags": list(base_semantic.get("tags") or []),
+                "path_context": base_semantic.get("path_context"),
+                "nearby_context": base_semantic.get("nearby_context"),
+            },
+            "context": context or {},
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _generate_llm_payload(self, prompt: str) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for _ in range(self.llm_max_retries):
+            try:
+                response = self._llm.generate(prompt, system_prompt=self.llm_system_prompt)
+                payload = extract_json_object(response)
+            except Exception as exc:
+                last_error = exc
+                continue
+
+            if not isinstance(payload.get("tags"), list):
+                raise ValueError("LLM metadata enrichment returned invalid tags")
+            return payload
+
+        if last_error is None:
+            raise ValueError("LLM metadata enrichment returned no response")
+        raise last_error
 
     @staticmethod
     def _path_context(chunk: dict[str, Any]) -> str:
