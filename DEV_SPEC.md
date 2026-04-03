@@ -2466,14 +2466,14 @@ dashboard:
 |------|---------|--------|------|
 | 阶段 A | 5 | 5 | 100% |
 | 阶段 B | 15 | 15 | 100% |
-| 阶段 C | 17 | 15 | 88% |
+| 阶段 C | 17 | 16 | 94% |
 | 阶段 D | 8 | 0 | 0% |
 | 阶段 E | 9 | 0 | 0% |
 | 阶段 F | 6 | 0 | 0% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **35** | **42.7%** |
+| **总计** | **82** | **36** | **43.9%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2704,7 +2704,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | C10 | 实现 Dense Embedding 编码 | [x] | 2026-04-03 | dense encoder tests passed |
 | C11 | 实现 Sparse(BM25) 编码与处理优化 | [x] | 2026-04-03 | sparse encoder and optimization tests passed |
 | C12 | 实现 Storage 主编排与向量库 Upsert | [x] | 2026-04-03 | storage pipeline and vector upsert tests passed |
-| C13 | 实现 BM25 索引构建与图片文件存储 | [ ] |  |  |
+| C13 | 实现 BM25 索引构建与图片文件存储 | [x] | 2026-04-03 | bm25 indexing and image persistence tests passed |
 | C14 | 打通 Ingestion Pipeline 与 CLI 集成链路 | [ ] |  |  |
 
 ##### C1 实现 Pipeline 主流程与回调协议
