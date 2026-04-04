@@ -110,6 +110,7 @@ class StoragePipeline:
         )
         written_ids = self.vector_upsert.write(records)
         return {
+            "chunk_records": records,
             "records": [record.to_dict() for record in records],
             "record_count": len(records),
             "written_ids": list(written_ids),

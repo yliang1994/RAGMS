@@ -42,6 +42,12 @@ class IngestionPipeline:
         file_integrity: FileIntegrity | None = None,
         document_registry: DocumentRegistry | None = None,
         callbacks: list[PipelineCallback] | None = None,
+        chunking_pipeline: Any | None = None,
+        dense_encoder: Any | None = None,
+        sparse_encoder: Any | None = None,
+        storage_pipeline: Any | None = None,
+        bm25_writer: Any | None = None,
+        image_storage_writer: Any | None = None,
     ) -> None:
         self.loader = loader
         self.splitter = splitter
@@ -51,6 +57,12 @@ class IngestionPipeline:
         self.file_integrity = file_integrity
         self.document_registry = document_registry
         self.callbacks = list(callbacks or [])
+        self.chunking_pipeline = chunking_pipeline
+        self.dense_encoder = dense_encoder
+        self.sparse_encoder = sparse_encoder
+        self.storage_pipeline = storage_pipeline
+        self.bm25_writer = bm25_writer
+        self.image_storage_writer = image_storage_writer
 
     def run(
         self,
@@ -74,7 +86,11 @@ class IngestionPipeline:
             "chunks": [],
             "smart_chunks": [],
             "vectors": [],
+            "sparse_vectors": [],
+            "chunk_records": [],
             "stored_ids": [],
+            "bm25": {},
+            "stored_images": {},
         }
         self._emit_pipeline_start(state)
 
@@ -244,7 +260,14 @@ class IngestionPipeline:
 
         chunks: list[dict[str, Any]] = []
         for document in state["documents"]:
-            chunks.extend(self.splitter.split(document))
+            if self.chunking_pipeline is None:
+                chunks.extend(self.splitter.split(document))
+                continue
+            normalized_chunks = self.chunking_pipeline.run(document)
+            chunks.extend(
+                chunk.to_dict() if hasattr(chunk, "to_dict") else dict(chunk)
+                for chunk in normalized_chunks
+            )
         state["chunks"] = chunks
 
         payload = {"chunk_count": len(chunks)}
@@ -298,11 +321,25 @@ class IngestionPipeline:
 
         if self.embedding is None or not state["smart_chunks"]:
             state["vectors"] = []
+            state["sparse_vectors"] = []
         else:
-            texts = [str(chunk.get("content", "")) for chunk in state["smart_chunks"]]
-            state["vectors"] = self.embedding.embed_documents(texts)
+            if self.dense_encoder is not None:
+                state["vectors"] = self.dense_encoder.encode_documents(state["smart_chunks"])
+            else:
+                texts = [str(chunk.get("content", "")) for chunk in state["smart_chunks"]]
+                state["vectors"] = self.embedding.embed_documents(texts)
 
-        payload = {"vector_count": len(state["vectors"])}
+            if self.sparse_encoder is not None:
+                state["sparse_vectors"] = self.sparse_encoder.encode(state["smart_chunks"])
+            else:
+                state["sparse_vectors"] = [
+                    self._empty_sparse_vector(chunk) for chunk in state["smart_chunks"]
+                ]
+
+        payload = {
+            "vector_count": len(state["vectors"]),
+            "sparse_vector_count": len(state["sparse_vectors"]),
+        }
         self._emit_stage_end(
             state=state,
             stage=stage,
@@ -320,32 +357,62 @@ class IngestionPipeline:
         self._emit_stage_start(state=state, stage=stage, index=index)
         started_at = time.perf_counter()
 
-        if self.vector_store is None:
-            state["stored_ids"] = []
+        if self.storage_pipeline is None:
+            if self.vector_store is None:
+                state["stored_ids"] = []
+            else:
+                smart_chunks = list(state["smart_chunks"])
+                vectors = list(state["vectors"])
+                if smart_chunks and not vectors:
+                    raise ValueError("Embedding vectors are required before vector-store persistence")
+                if len(smart_chunks) != len(vectors):
+                    raise ValueError("Chunk count and vector count must match before storage")
+                if not smart_chunks:
+                    state["stored_ids"] = []
+                else:
+                    ids = [
+                        self._build_chunk_id(state["source_path"], chunk, chunk_index)
+                        for chunk_index, chunk in enumerate(smart_chunks)
+                    ]
+                    documents = [str(chunk.get("content", "")) for chunk in smart_chunks]
+                    metadatas = [dict(chunk.get("metadata") or {}) for chunk in smart_chunks]
+                    state["stored_ids"] = self.vector_store.add(
+                        ids,
+                        vectors,
+                        documents=documents,
+                        metadatas=metadatas,
+                    )
+            payload = {"stored_count": len(state["stored_ids"])}
         else:
             smart_chunks = list(state["smart_chunks"])
             vectors = list(state["vectors"])
+            sparse_vectors = list(state.get("sparse_vectors") or [])
             if smart_chunks and not vectors:
-                raise ValueError("Embedding vectors are required before vector-store persistence")
-            if len(smart_chunks) != len(vectors):
-                raise ValueError("Chunk count and vector count must match before storage")
-            if not smart_chunks:
-                state["stored_ids"] = []
-            else:
-                ids = [
-                    self._build_chunk_id(state["source_path"], chunk, chunk_index)
-                    for chunk_index, chunk in enumerate(smart_chunks)
-                ]
-                documents = [str(chunk.get("content", "")) for chunk in smart_chunks]
-                metadatas = [dict(chunk.get("metadata") or {}) for chunk in smart_chunks]
-                state["stored_ids"] = self.vector_store.add(
-                    ids,
-                    vectors,
-                    documents=documents,
-                    metadatas=metadatas,
-                )
+                raise ValueError("Embedding vectors are required before storage persistence")
+            if not sparse_vectors and smart_chunks:
+                sparse_vectors = [self._empty_sparse_vector(chunk) for chunk in smart_chunks]
+            storage_result = self.storage_pipeline.run(
+                smart_chunks,
+                dense_vectors=vectors,
+                sparse_vectors=sparse_vectors,
+            )
+            state["chunk_records"] = list(storage_result.get("chunk_records") or [])
+            state["stored_ids"] = list(storage_result.get("written_ids") or [])
+            bm25_result = {}
+            image_result = {}
+            if self.bm25_writer is not None:
+                bm25_result = self.bm25_writer.index(state["chunk_records"])
+                state["bm25"] = dict(bm25_result)
+            if self.image_storage_writer is not None:
+                image_result = self.image_storage_writer.save_all(state["chunk_records"])
+                state["stored_images"] = dict(image_result)
+            payload = {
+                "stored_count": len(state["stored_ids"]),
+                "record_count": int(storage_result.get("record_count", 0) or 0),
+                "bm25_indexed_count": int(bm25_result.get("indexed_count", 0) or 0),
+                "stored_image_count": int(image_result.get("stored_count", 0) or 0),
+            }
 
-        payload = {"stored_count": len(state["stored_ids"])}
         self._emit_stage_end(
             state=state,
             stage=stage,
@@ -382,6 +449,18 @@ class IngestionPipeline:
             )
             payload["registry_status"] = str(record["status"])
             payload["registry_stage"] = str(record["current_stage"])
+        if (
+            final_status in {"indexed", "skipped"}
+            and self.file_integrity is not None
+            and hasattr(self.file_integrity, "mark_success")
+        ):
+            history_record = self.file_integrity.mark_success(
+                state["source_path"],
+                source_sha256=state["source_sha256"],
+                document_id=state["document_id"],
+                status=final_status,
+            )
+            payload["ingestion_history_status"] = str(history_record.get("status", final_status))
 
         self._emit_stage_end(
             state=state,
@@ -433,6 +512,17 @@ class IngestionPipeline:
             error=failure["error"],
             completed_stages=completed_stages,
         )
+        if (
+            self.file_integrity is not None
+            and hasattr(self.file_integrity, "mark_failed")
+            and state["source_sha256"] is not None
+        ):
+            self.file_integrity.mark_failed(
+                state["source_path"],
+                error_message=failure["error"]["message"],
+                source_sha256=state["source_sha256"],
+                document_id=state["document_id"],
+            )
         lifecycle_payload = self._run_lifecycle_stage(
             state,
             index=len(self.STAGE_ORDER),
@@ -606,7 +696,11 @@ class IngestionPipeline:
             "chunks": list(state.get("chunks", [])),
             "smart_chunks": list(state.get("smart_chunks", [])),
             "vectors": list(state.get("vectors", [])),
+            "sparse_vectors": list(state.get("sparse_vectors", [])),
+            "chunk_records": list(state.get("chunk_records", [])),
             "stored_ids": list(state.get("stored_ids", [])),
+            "bm25": dict(state.get("bm25") or {}),
+            "stored_images": dict(state.get("stored_images") or {}),
             "error": {
                 "type": error.__class__.__name__,
                 "message": str(error),
@@ -657,3 +751,17 @@ class IngestionPipeline:
         """Hash fallback text inputs when a byte-level source hash is unavailable."""
 
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _empty_sparse_vector(chunk: dict[str, Any]) -> dict[str, Any]:
+        """Return a minimal sparse payload when sparse encoding is unavailable."""
+
+        content = str(chunk.get("content", ""))
+        return {
+            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "tokens": [],
+            "term_frequencies": {},
+            "term_weights": {},
+            "document_length": 0,
+            "unique_terms": 0,
+        }
