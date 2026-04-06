@@ -35,9 +35,24 @@ class LLMSettings(StrictModel):
 class EmbeddingSettings(StrictModel):
     """Dense embedding model configuration."""
 
-    provider: Literal["openai"] = "openai"
+    provider: Literal["openai", "qwen"] = "openai"
     model: str = "text-embedding-3-small"
     api_key: str | None = None
+    base_url: str | None = None
+    batch_size: int = 10
+
+
+class IngestionTransformSettings(StrictModel):
+    """Feature flags for transform-stage optional LLM behaviors."""
+
+    enable_llm_chunk_refine: bool = False
+    enable_llm_metadata_enrich: bool = False
+
+
+class IngestionSettings(StrictModel):
+    """Ingestion pipeline runtime settings."""
+
+    transform: IngestionTransformSettings = Field(default_factory=IngestionTransformSettings)
 
 
 class VisionLLMSettings(StrictModel):
@@ -116,6 +131,7 @@ class AppSettings(StrictModel):
     paths: PathSettings = Field(default_factory=PathSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
+    ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
     vision_llm: VisionLLMSettings = Field(default_factory=VisionLLMSettings)
     vector_store: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)

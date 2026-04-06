@@ -9,8 +9,8 @@ from ragms.libs.providers.loaders.markitdown_loader import MarkItDownLoader
 from ragms.libs.providers.splitters.recursive_character_splitter import RecursiveCharacterSplitter
 from ragms.runtime.container import ServiceContainer
 from ragms.runtime.settings_models import AppSettings
-from scripts.ingest_documents import ingest_documents_main
-from tests.fakes import FakeEmbedding, FakeVectorStore, FakeVisionLLM
+from scripts.ingest_documents import build_ingestion_pipeline, ingest_documents_main
+from tests.fakes import FakeEmbedding, FakeLLM, FakeVectorStore, FakeVisionLLM
 
 
 def _write_settings(path: Path) -> Path:
@@ -68,12 +68,15 @@ def _write_settings(path: Path) -> Path:
 
 
 def _service_container(settings: AppSettings) -> ServiceContainer:
+    llm = FakeLLM()
+    llm.model = "fake-llm"
     return ServiceContainer(
         settings=settings,
         services={
             "settings": settings,
             "loader": MarkItDownLoader(),
             "splitter": RecursiveCharacterSplitter(chunk_size=64, chunk_overlap=0),
+            "llm": llm,
             "embedding": FakeEmbedding(dimension=4),
             "vector_store": FakeVectorStore(),
             "vision_llm": FakeVisionLLM(),
@@ -128,3 +131,45 @@ def test_ingest_documents_cli_supports_batch_skip_and_force(
     assert second_output.count("status=skipped") == 2
     assert third_output.count("status=indexed") == 2
     assert "force=true" in third_output
+
+
+@pytest.mark.integration
+def test_build_ingestion_pipeline_wires_llm_transform_steps_from_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_path = _write_settings(tmp_path / "settings.yaml")
+    settings_text = settings_path.read_text(encoding="utf-8").replace(
+        "api_key: null",
+        "api_key: test-key",
+        1,
+    )
+    settings_path.write_text(
+        settings_text.replace(
+            "vector_store:\n",
+            "ingestion:\n"
+            "  transform:\n"
+            "    enable_llm_chunk_refine: true\n"
+            "    enable_llm_metadata_enrich: true\n"
+            "vector_store:\n",
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "scripts.ingest_documents.build_container",
+        lambda settings: _service_container(settings),
+    )
+
+    from ragms.runtime.config import load_settings
+
+    pipeline = build_ingestion_pipeline(load_settings(settings_path), collection="demo")
+
+    assert pipeline.transform is not None
+    assert pipeline.transform.smart_chunk_builder.enable_llm_refine is True
+    assert pipeline.transform.smart_chunk_builder._llm is not None
+    assert getattr(pipeline.transform.smart_chunk_builder._llm, "model", None) == "fake-llm"
+    assert pipeline.transform.metadata_injector.enable_llm_enrich is True
+    assert pipeline.transform.metadata_injector.service.enable_llm_enrich is True
+    assert pipeline.transform.metadata_injector.service._llm is not None
+    assert pipeline.transform.metadata_injector.service.llm_model == "fake-llm"

@@ -20,6 +20,7 @@ from ragms.ingestion_pipeline.transform import (
     SmartChunkBuilder,
     TransformPipeline,
 )
+from ragms.ingestion_pipeline.transform.services import MetadataService
 from ragms.runtime.config import load_settings
 from ragms.runtime.container import build_container
 from ragms.runtime.settings_models import AppSettings
@@ -79,13 +80,27 @@ def build_ingestion_pipeline(
     processing_cache = ProcessingCacheRepository(connection)
     images_repository = ImagesRepository(connection)
     collection_name = resolved_settings.vector_store.collection
+    llm = container.get("llm")
+    if not getattr(resolved_settings.llm, "api_key", None):
+        llm = None
     vision_llm = container.get("vision_llm")
     if not getattr(resolved_settings.vision_llm, "api_key", None):
         vision_llm = None
 
     transform = TransformPipeline(
-        smart_chunk_builder=SmartChunkBuilder(),
-        metadata_injector=SemanticMetadataInjector(),
+        smart_chunk_builder=SmartChunkBuilder(
+            enable_llm_refine=resolved_settings.ingestion.transform.enable_llm_chunk_refine,
+            llm=llm,
+            llm_model=getattr(llm, "model", None) if llm is not None else None,
+        ),
+        metadata_injector=SemanticMetadataInjector(
+            service=MetadataService(
+                enable_llm_enrich=resolved_settings.ingestion.transform.enable_llm_metadata_enrich,
+                llm=llm,
+                llm_model=getattr(llm, "model", None) if llm is not None else None,
+            ),
+            enable_llm_enrich=resolved_settings.ingestion.transform.enable_llm_metadata_enrich,
+        ),
         image_captioner=ImageCaptionInjector(
             vision_llm=vision_llm,
             cache_repository=processing_cache,
@@ -103,7 +118,10 @@ def build_ingestion_pipeline(
         document_registry=document_registry,
         callbacks=callbacks,
         chunking_pipeline=ChunkingPipeline(container.get("splitter")),
-        dense_encoder=DenseEncoder(container.get("embedding")),
+        dense_encoder=DenseEncoder(
+            container.get("embedding"),
+            batch_size=resolved_settings.embedding.batch_size,
+        ),
         sparse_encoder=SparseEncoder(),
         storage_pipeline=StoragePipeline(
             vector_upsert=VectorUpsert(container.get("vector_store"))

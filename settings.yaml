@@ -7,17 +7,28 @@ paths:
   logs_dir: logs
 
 llm:
-  provider: openai
-  model: gpt-4.1-mini
+  provider: qwen
+  model: qwen3.5-plus
   api_key: null
+  base_url: null
 
 embedding:
-  provider: openai
-  model: text-embedding-3-small
+  provider: qwen
+  model: qwen-text-embedding-v1
+  api_key: null
+  base_url: null
+  batch_size: 10
+
+ingestion:
+  transform:
+    enable_llm_chunk_refine: true
+    enable_llm_metadata_enrich: true
 
 vision_llm:
   provider: auto
-  model: gpt-4.1-mini
+  model: qwen3-vl-plus
+  api_key: null
+  base_url: null
   language_providers:
     zh: qwen_vl
     en: gpt4o

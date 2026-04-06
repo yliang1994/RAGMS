@@ -28,6 +28,7 @@ class EmbeddingFactory:
 
     _PROVIDERS = {
         "openai": OpenAIEmbedding,
+        "qwen": OpenAIEmbedding,
     }
 
     @staticmethod
@@ -40,6 +41,8 @@ class EmbeddingFactory:
         if isinstance(config, Mapping) and "provider" not in options:
             raise RagMSError("Missing embedding provider in configuration")
 
+        # Encoder-level knobs live under embedding settings but are not provider ctor args.
+        options.pop("batch_size", None)
         provider = str(options.pop("provider", "openai")).strip().lower() or "openai"
         provider_class = EmbeddingFactory._PROVIDERS.get(provider)
         if provider_class is None:
