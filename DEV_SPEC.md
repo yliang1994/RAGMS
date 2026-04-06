@@ -2467,13 +2467,13 @@ dashboard:
 | 阶段 A | 5 | 5 | 100% |
 | 阶段 B | 15 | 15 | 100% |
 | 阶段 C | 17 | 17 | 100% |
-| 阶段 D | 8 | 7 | 87.5% |
+| 阶段 D | 8 | 8 | 100% |
 | 阶段 E | 9 | 0 | 0% |
 | 阶段 F | 6 | 0 | 0% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **44** | **53.7%** |
+| **总计** | **82** | **45** | **54.9%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2934,7 +2934,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | D5 | 实现 RRF 融合 | [x] | 2026-04-06 | rrf fusion tests passed |
 | D6 | 实现 HybridSearch 编排 | [x] | 2026-04-06 | hybrid search tests passed |
 | D7 | 实现 Reranker（Core 编排 + Fallback） | [x] | 2026-04-06 | reranker orchestration tests passed |
-| D8 | 打通 Query Engine 与查询 CLI | [ ] |  |  |
+| D8 | 打通 Query Engine 与查询 CLI | [x] | 2026-04-06 | query engine and cli tests passed |
 
 ##### D1 实现 Query Processor 关键词提取与 Filter 解析
 

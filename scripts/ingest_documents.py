@@ -162,6 +162,8 @@ def ingest_documents_main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--path",
+        "--source-dir",
+        dest="path",
         default="data/raw/documents",
         help="File or directory to ingest.",
     )
@@ -183,7 +185,22 @@ def ingest_documents_main(argv: Sequence[str] | None = None) -> int:
         collection=args.collection,
         callbacks=[ConsoleProgressCallback()],
     )
-    sources = _discover_sources(args.path)
+    try:
+        sources = _discover_sources(args.path)
+    except FileNotFoundError:
+        print(
+            "Ingestion bootstrap ready: "
+            f"collection={args.collection or settings.vector_store.collection} "
+            f"path={args.path} source_count=0"
+        )
+        print(f"No ingestion sources found at {args.path}")
+        return 0
+
+    print(
+        "Ingestion bootstrap ready: "
+        f"collection={args.collection or settings.vector_store.collection} "
+        f"path={args.path} source_count={len(sources)}"
+    )
     exit_code = 0
     for source in sources:
         print(f"ingest source={source} force={str(args.force).lower()}")

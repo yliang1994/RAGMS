@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ragms.core.models import HybridSearchResult, RetrievalCandidate
-from ragms.core.query_engine import ProcessedQuery
+from ragms.core.query_engine.query_processor import ProcessedQuery
 from ragms.runtime.exceptions import RagMSError
 
 

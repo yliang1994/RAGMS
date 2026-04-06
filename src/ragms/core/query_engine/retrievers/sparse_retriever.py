@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ragms.core.models import RetrievalCandidate
-from ragms.core.query_engine import ProcessedQuery
+from ragms.core.query_engine.query_processor import ProcessedQuery
 from ragms.runtime.exceptions import RagMSError
 from ragms.storage.indexes import BM25Indexer
 
