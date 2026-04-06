@@ -101,7 +101,7 @@ async def test_stdio_server_initializes_without_stdout_pollution(tmp_path: Path)
 
     server_params = StdioServerParameters(
         command=str(repo_root / ".venv" / "bin" / "python"),
-        args=["scripts/run_mcp_server.py", "--settings", str(settings_path)],
+        args=["-u", "scripts/run_mcp_server.py", "--settings", str(settings_path)],
         cwd=str(repo_root),
         env=env,
     )

@@ -2468,12 +2468,12 @@ dashboard:
 | 阶段 B | 15 | 15 | 100% |
 | 阶段 C | 17 | 17 | 100% |
 | 阶段 D | 8 | 8 | 100% |
-| 阶段 E | 9 | 8 | 89% |
+| 阶段 E | 9 | 9 | 100% |
 | 阶段 F | 6 | 0 | 0% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **53** | **64.6%** |
+| **总计** | **82** | **54** | **65.9%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -3015,7 +3015,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | E6 | 实现 `ingest_documents` Tool | [x] | 2026-04-07 | ingest tool batch orchestration and contract tests passed |
 | E7 | 实现 `list_collections` Tool | [x] | 2026-04-07 | collections tool summary and metadata service tests passed |
 | E8 | 实现 `get_document_summary` Tool | [x] | 2026-04-07 | document summary tool and management service tests passed |
-| E9 | 完成核心工具 MCP 集成测试与 STDIO E2E 验收 | [ ] |  |  |
+| E9 | 完成核心工具 MCP 集成测试与 STDIO E2E 验收 | [x] | 2026-04-07 | core mcp integration and stdio e2e tests passed |
 
 ##### E1 实现 MCP Server 启动入口、STDIO 边界与生命周期
 

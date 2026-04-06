@@ -8,9 +8,13 @@ from typing import Any, Callable
 
 from mcp import types
 
+from ragms.ingestion_pipeline.bootstrap import (
+    build_ingestion_pipeline,
+    discover_ingestion_sources,
+    run_ingestion_batch,
+)
 from ragms.mcp_server.protocol_handler import ProtocolHandler
 from ragms.runtime.container import ServiceContainer
-from scripts.ingest_documents import build_ingestion_pipeline, discover_ingestion_sources, run_ingestion_batch
 
 
 def normalize_ingest_request(
