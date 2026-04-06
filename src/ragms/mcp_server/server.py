@@ -11,6 +11,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from mcp.server.models import InitializationOptions
 
+from ragms.mcp_server.tool_registry import build_tool_registry, register_tools
 from ragms.runtime.container import ServiceContainer, bootstrap_mcp_runtime
 
 
@@ -43,7 +44,10 @@ def create_server(
         ),
         log_level=log_level.upper(),
     )
+    tool_registry = build_tool_registry()
+    register_tools(server, tool_registry)
     setattr(server, "runtime_container", runtime)
+    setattr(server, "tool_registry", tool_registry)
     return server
 
 

@@ -2468,12 +2468,12 @@ dashboard:
 | 阶段 B | 15 | 15 | 100% |
 | 阶段 C | 17 | 17 | 100% |
 | 阶段 D | 8 | 8 | 100% |
-| 阶段 E | 9 | 1 | 11% |
+| 阶段 E | 9 | 3 | 33% |
 | 阶段 F | 6 | 0 | 0% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **46** | **56.1%** |
+| **总计** | **82** | **48** | **58.5%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -3008,8 +3008,8 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
 | E1 | 实现 MCP Server 启动入口、STDIO 边界与生命周期 | [x] | 2026-04-07 | mcp server bootstrap and initialize tests passed |
-| E2 | 实现 Tool Registry 与 Tool 元数据声明 | [ ] |  |  |
-| E3 | 实现 Schema 定义、默认值注入与参数校验 | [ ] |  |  |
+| E2 | 实现 Tool Registry 与 Tool 元数据声明 | [x] | 2026-04-07 | tool registry and tools list contract tests passed |
+| E3 | 实现 Schema 定义、默认值注入与参数校验 | [x] | 2026-04-07 | tool schemas and protocol validation tests passed |
 | E4 | 实现统一协议响应包装与错误收敛 | [ ] |  |  |
 | E5 | 实现 `query_knowledge_hub` Tool 与完整响应契约 | [ ] |  |  |
 | E6 | 实现 `ingest_documents` Tool | [ ] |  |  |
