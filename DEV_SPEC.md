@@ -2467,13 +2467,13 @@ dashboard:
 | 阶段 A | 5 | 5 | 100% |
 | 阶段 B | 15 | 15 | 100% |
 | 阶段 C | 17 | 17 | 100% |
-| 阶段 D | 8 | 5 | 62.5% |
+| 阶段 D | 8 | 6 | 75% |
 | 阶段 E | 9 | 0 | 0% |
 | 阶段 F | 6 | 0 | 0% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **42** | **51.2%** |
+| **总计** | **82** | **43** | **52.4%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -2932,7 +2932,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | D3 | 实现 DenseRetriever（调用 `BaseVectorStore.query`） | [x] | 2026-04-06 | dense retriever tests passed |
 | D4 | 实现 SparseRetriever（BM25 查询） | [x] | 2026-04-06 | sparse retriever tests passed |
 | D5 | 实现 RRF 融合 | [x] | 2026-04-06 | rrf fusion tests passed |
-| D6 | 实现 HybridSearch 编排 | [ ] |  |  |
+| D6 | 实现 HybridSearch 编排 | [x] | 2026-04-06 | hybrid search tests passed |
 | D7 | 实现 Reranker（Core 编排 + Fallback） | [ ] |  |  |
 | D8 | 打通 Query Engine 与查询 CLI | [ ] |  |  |
 
