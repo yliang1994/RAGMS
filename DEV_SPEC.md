@@ -2468,12 +2468,12 @@ dashboard:
 | 阶段 B | 15 | 15 | 100% |
 | 阶段 C | 17 | 17 | 100% |
 | 阶段 D | 8 | 8 | 100% |
-| 阶段 E | 9 | 5 | 56% |
+| 阶段 E | 9 | 6 | 67% |
 | 阶段 F | 6 | 0 | 0% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **50** | **61.0%** |
+| **总计** | **82** | **51** | **62.2%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -3012,7 +3012,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | E3 | 实现 Schema 定义、默认值注入与参数校验 | [x] | 2026-04-07 | tool schemas and protocol validation tests passed |
 | E4 | 实现统一协议响应包装与错误收敛 | [x] | 2026-04-07 | protocol handler response and error mapping tests passed |
 | E5 | 实现 `query_knowledge_hub` Tool 与完整响应契约 | [x] | 2026-04-07 | query tool contract and multimodal response tests passed |
-| E6 | 实现 `ingest_documents` Tool | [ ] |  |  |
+| E6 | 实现 `ingest_documents` Tool | [x] | 2026-04-07 | ingest tool batch orchestration and contract tests passed |
 | E7 | 实现 `list_collections` Tool | [ ] |  |  |
 | E8 | 实现 `get_document_summary` Tool | [ ] |  |  |
 | E9 | 完成核心工具 MCP 集成测试与 STDIO E2E 验收 | [ ] |  |  |

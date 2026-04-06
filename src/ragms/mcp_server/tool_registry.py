@@ -8,7 +8,7 @@ from typing import Any, Callable
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools.base import Tool
 
-from ragms.mcp_server.tools import bind_query_tool
+from ragms.mcp_server.tools import bind_ingest_tool, bind_query_tool
 from ragms.mcp_server.schemas import get_input_schema
 from ragms.runtime.exceptions import RagMSError
 from ragms.runtime.container import ServiceContainer
@@ -147,7 +147,7 @@ def build_tool_registry(
         ToolDefinition(
             name="ingest_documents",
             description="触发文档摄取任务，支持新文档入库、增量跳过或强制重建。",
-            handler=_ingest_documents,
+            handler=_ingest_documents if runtime is None else bind_ingest_tool(runtime),
             input_schema=get_input_schema("ingest_documents"),
         ),
         ToolDefinition(

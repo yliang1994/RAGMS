@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from collections.abc import Sequence
+from typing import Any
 
 from ragms.ingestion_pipeline import IngestionPipeline, PipelineCallback, PipelineEvent, StageEvent, ErrorEvent
 from ragms.ingestion_pipeline.chunking import ChunkingPipeline
@@ -183,6 +184,62 @@ def _discover_sources(path: str | Path) -> list[Path]:
     raise FileNotFoundError(f"Ingestion path does not exist: {target}")
 
 
+def discover_ingestion_sources(paths: Sequence[str | Path]) -> tuple[list[Path], list[dict[str, str]]]:
+    """Resolve one or more inputs into a deduplicated list of source files and path errors."""
+
+    discovered: list[Path] = []
+    seen: set[str] = set()
+    errors: list[dict[str, str]] = []
+
+    for raw_path in paths:
+        try:
+            sources = _discover_sources(raw_path)
+        except FileNotFoundError as exc:
+            errors.append(
+                {
+                    "path": str(Path(raw_path).expanduser()),
+                    "message": str(exc),
+                }
+            )
+            continue
+
+        for source in sources:
+            normalized = str(source)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            discovered.append(source)
+
+    return discovered, errors
+
+
+def run_ingestion_batch(
+    pipeline: IngestionPipeline,
+    *,
+    sources: Sequence[str | Path],
+    collection: str,
+    force_rebuild: bool,
+) -> list[dict[str, Any]]:
+    """Execute ingestion for a list of resolved sources and keep the raw pipeline payloads."""
+
+    results: list[dict[str, Any]] = []
+    for source in sources:
+        result = pipeline.run(
+            source,
+            metadata={
+                "collection": collection,
+                "force_rebuild": force_rebuild,
+            },
+        )
+        results.append(
+            {
+                "source_path": str(Path(source)),
+                "result": result,
+            }
+        )
+    return results
+
+
 def ingest_documents_main(argv: Sequence[str] | None = None) -> int:
     """Run local ingestion for one file or a directory tree."""
 
@@ -217,9 +274,8 @@ def ingest_documents_main(argv: Sequence[str] | None = None) -> int:
         collection=args.collection,
         callbacks=[ConsoleProgressCallback()],
     )
-    try:
-        sources = _discover_sources(args.path)
-    except FileNotFoundError:
+    sources, errors = discover_ingestion_sources([args.path])
+    if not sources:
         print(
             "Ingestion bootstrap ready: "
             f"collection={args.collection or settings.vector_store.collection} "
@@ -234,15 +290,17 @@ def ingest_documents_main(argv: Sequence[str] | None = None) -> int:
         f"path={args.path} source_count={len(sources)}"
     )
     exit_code = 0
-    for source in sources:
+    for error in errors:
+        print(f"source_error path={error['path']} error={error['message']}")
+    for item in run_ingestion_batch(
+        pipeline,
+        sources=sources,
+        collection=args.collection or settings.vector_store.collection,
+        force_rebuild=args.force,
+    ):
+        source = item["source_path"]
+        result = item["result"]
         print(f"ingest source={source} force={str(args.force).lower()}")
-        result = pipeline.run(
-            source,
-            metadata={
-                "collection": args.collection or settings.vector_store.collection,
-                "force_rebuild": args.force,
-            },
-        )
         final_status = str(result.get("lifecycle", {}).get("final_status") or result.get("status"))
         print(
             f"result source={source} status={final_status} "
