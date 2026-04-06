@@ -8,7 +8,7 @@ from typing import Any, Callable
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools.base import Tool
 
-from ragms.mcp_server.tools import bind_ingest_tool, bind_query_tool
+from ragms.mcp_server.tools import bind_collections_tool, bind_ingest_tool, bind_query_tool
 from ragms.mcp_server.schemas import get_input_schema
 from ragms.runtime.exceptions import RagMSError
 from ragms.runtime.container import ServiceContainer
@@ -135,7 +135,7 @@ def build_tool_registry(
         ToolDefinition(
             name="list_collections",
             description="列出当前可用知识库集合及其基础统计信息，供 Agent 做集合发现与选择。",
-            handler=_list_collections,
+            handler=_list_collections if runtime is None else bind_collections_tool(runtime),
             input_schema=get_input_schema("list_collections"),
         ),
         ToolDefinition(
