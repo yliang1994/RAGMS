@@ -60,8 +60,8 @@ class DenseRetriever:
                 raise DenseRetrieverError("Dense retriever returned an invalid match payload") from exc
         return candidates
 
-    @staticmethod
-    def _build_filters(processed_query: ProcessedQuery) -> dict[str, Any]:
+    def _build_filters(self, processed_query: ProcessedQuery) -> dict[str, Any]:
         filters = dict(processed_query.pre_filters)
-        filters["collection"] = processed_query.collection
+        if not hasattr(self.vector_store, "collection"):
+            filters["collection"] = processed_query.collection
         return filters

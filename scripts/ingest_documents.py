@@ -21,9 +21,10 @@ from ragms.ingestion_pipeline.transform import (
     TransformPipeline,
 )
 from ragms.ingestion_pipeline.transform.services import MetadataService
+from ragms.libs.factories import LLMFactory
 from ragms.runtime.config import load_settings
 from ragms.runtime.container import build_container
-from ragms.runtime.settings_models import AppSettings
+from ragms.runtime.settings_models import AppSettings, LLMOverrideSettings
 from ragms.storage.images import ImageStorage
 from ragms.storage.indexes import BM25Indexer
 from ragms.storage.sqlite.repositories import (
@@ -64,6 +65,21 @@ def _apply_collection_override(settings: AppSettings, collection: str | None) ->
     return updated
 
 
+def _resolve_transform_llm(
+    settings: AppSettings,
+    *,
+    override: LLMOverrideSettings,
+):
+    """Build a transform-scoped LLM by overlaying optional overrides on the primary config."""
+
+    llm_settings = settings.llm.model_copy(
+        update=override.model_dump(mode="python", exclude_none=True)
+    )
+    if not getattr(llm_settings, "api_key", None):
+        return None
+    return LLMFactory.create(llm_settings)
+
+
 def build_ingestion_pipeline(
     settings: AppSettings,
     *,
@@ -83,6 +99,14 @@ def build_ingestion_pipeline(
     llm = container.get("llm")
     if not getattr(resolved_settings.llm, "api_key", None):
         llm = None
+    chunk_refine_llm = _resolve_transform_llm(
+        resolved_settings,
+        override=resolved_settings.ingestion.transform.chunk_refine_llm,
+    )
+    metadata_enrich_llm = _resolve_transform_llm(
+        resolved_settings,
+        override=resolved_settings.ingestion.transform.metadata_enrich_llm,
+    )
     vision_llm = container.get("vision_llm")
     if not getattr(resolved_settings.vision_llm, "api_key", None):
         vision_llm = None
@@ -90,14 +114,22 @@ def build_ingestion_pipeline(
     transform = TransformPipeline(
         smart_chunk_builder=SmartChunkBuilder(
             enable_llm_refine=resolved_settings.ingestion.transform.enable_llm_chunk_refine,
-            llm=llm,
-            llm_model=getattr(llm, "model", None) if llm is not None else None,
+            llm=chunk_refine_llm or llm,
+            llm_model=(
+                getattr(chunk_refine_llm, "model", None)
+                if chunk_refine_llm is not None
+                else getattr(llm, "model", None) if llm is not None else None
+            ),
         ),
         metadata_injector=SemanticMetadataInjector(
             service=MetadataService(
                 enable_llm_enrich=resolved_settings.ingestion.transform.enable_llm_metadata_enrich,
-                llm=llm,
-                llm_model=getattr(llm, "model", None) if llm is not None else None,
+                llm=metadata_enrich_llm or llm,
+                llm_model=(
+                    getattr(metadata_enrich_llm, "model", None)
+                    if metadata_enrich_llm is not None
+                    else getattr(llm, "model", None) if llm is not None else None
+                ),
             ),
             enable_llm_enrich=resolved_settings.ingestion.transform.enable_llm_metadata_enrich,
         ),

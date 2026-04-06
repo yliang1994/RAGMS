@@ -36,6 +36,12 @@ def test_load_settings_parses_yaml_and_normalizes_paths(tmp_path: Path) -> None:
           transform:
             enable_llm_chunk_refine: true
             enable_llm_metadata_enrich: false
+            chunk_refine_llm:
+              provider: qwen
+              model: qwen3.5-flash
+            metadata_enrich_llm:
+              provider: qwen
+              model: qwen3.5-flash
         vector_store:
           backend: chroma
           collection: default
@@ -63,6 +69,10 @@ def test_load_settings_parses_yaml_and_normalizes_paths(tmp_path: Path) -> None:
     assert settings.embedding.batch_size == 10
     assert settings.ingestion.transform.enable_llm_chunk_refine is True
     assert settings.ingestion.transform.enable_llm_metadata_enrich is False
+    assert settings.ingestion.transform.chunk_refine_llm.provider == "qwen"
+    assert settings.ingestion.transform.chunk_refine_llm.model == "qwen3.5-flash"
+    assert settings.ingestion.transform.metadata_enrich_llm.provider == "qwen"
+    assert settings.ingestion.transform.metadata_enrich_llm.model == "qwen3.5-flash"
     assert settings.paths.project_root == tmp_path.resolve()
     assert settings.paths.data_dir == (tmp_path / "data").resolve()
     assert settings.observability.log_file == (tmp_path / "logs/traces.jsonl").resolve()
@@ -89,6 +99,8 @@ def test_environment_variables_override_keys_and_paths(
           transform:
             enable_llm_chunk_refine: false
             enable_llm_metadata_enrich: false
+            chunk_refine_llm: {}
+            metadata_enrich_llm: {}
         vector_store:
           backend: chroma
           collection: default
@@ -119,6 +131,8 @@ def test_environment_variables_override_keys_and_paths(
     monkeypatch.setenv("RAGMS_EMBEDDING__BATCH_SIZE", "8")
     monkeypatch.setenv("RAGMS_INGESTION__TRANSFORM__ENABLE_LLM_CHUNK_REFINE", "true")
     monkeypatch.setenv("RAGMS_INGESTION__TRANSFORM__ENABLE_LLM_METADATA_ENRICH", "true")
+    monkeypatch.setenv("RAGMS_INGESTION__TRANSFORM__CHUNK_REFINE_LLM__MODEL", "qwen3.5-flash")
+    monkeypatch.setenv("RAGMS_INGESTION__TRANSFORM__METADATA_ENRICH_LLM__MODEL", "qwen3.5-flash")
     monkeypatch.setenv("RAGMS_PATHS__DATA_DIR", "custom-data")
 
     settings = load_settings(settings_path)
@@ -131,6 +145,8 @@ def test_environment_variables_override_keys_and_paths(
     assert settings.embedding.batch_size == 8
     assert settings.ingestion.transform.enable_llm_chunk_refine is True
     assert settings.ingestion.transform.enable_llm_metadata_enrich is True
+    assert settings.ingestion.transform.chunk_refine_llm.model == "qwen3.5-flash"
+    assert settings.ingestion.transform.metadata_enrich_llm.model == "qwen3.5-flash"
     assert settings.paths.data_dir == (tmp_path / "custom-data").resolve()
 
 

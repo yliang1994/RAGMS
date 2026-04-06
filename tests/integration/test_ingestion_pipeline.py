@@ -151,6 +151,12 @@ def test_build_ingestion_pipeline_wires_llm_transform_steps_from_settings(
             "  transform:\n"
             "    enable_llm_chunk_refine: true\n"
             "    enable_llm_metadata_enrich: true\n"
+            "    chunk_refine_llm:\n"
+            "      provider: qwen\n"
+            "      model: qwen3.5-flash\n"
+            "    metadata_enrich_llm:\n"
+            "      provider: qwen\n"
+            "      model: qwen3.5-flash\n"
             "vector_store:\n",
         ),
         encoding="utf-8",
@@ -168,8 +174,10 @@ def test_build_ingestion_pipeline_wires_llm_transform_steps_from_settings(
     assert pipeline.transform is not None
     assert pipeline.transform.smart_chunk_builder.enable_llm_refine is True
     assert pipeline.transform.smart_chunk_builder._llm is not None
-    assert getattr(pipeline.transform.smart_chunk_builder._llm, "model", None) == "fake-llm"
+    assert getattr(pipeline.transform.smart_chunk_builder._llm, "model", None) == "qwen3.5-flash"
+    assert getattr(pipeline.transform.smart_chunk_builder._llm, "provider_display_name", None) == "Qwen"
     assert pipeline.transform.metadata_injector.enable_llm_enrich is True
     assert pipeline.transform.metadata_injector.service.enable_llm_enrich is True
     assert pipeline.transform.metadata_injector.service._llm is not None
-    assert pipeline.transform.metadata_injector.service.llm_model == "fake-llm"
+    assert getattr(pipeline.transform.metadata_injector.service._llm, "model", None) == "qwen3.5-flash"
+    assert pipeline.transform.metadata_injector.service.llm_model == "qwen3.5-flash"

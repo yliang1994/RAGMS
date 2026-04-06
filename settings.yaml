@@ -21,8 +21,18 @@ embedding:
 
 ingestion:
   transform:
-    enable_llm_chunk_refine: true
-    enable_llm_metadata_enrich: true
+    enable_llm_chunk_refine: false
+    enable_llm_metadata_enrich: false
+    chunk_refine_llm:
+      provider: qwen
+      model: qwen3.5-flash
+      api_key: null
+      base_url: null
+    metadata_enrich_llm:
+      provider: qwen
+      model: qwen3.5-flash
+      api_key: null
+      base_url: null
 
 vision_llm:
   provider: auto
@@ -48,7 +58,7 @@ storage:
 retrieval:
   strategy: hybrid
   fusion_algorithm: rrf
-  rerank_backend: disabled
+  rerank_backend: cross_encoder
 
 evaluation:
   backends:

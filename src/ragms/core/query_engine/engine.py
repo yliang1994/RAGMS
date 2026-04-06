@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ragms.core.query_engine.answer_generator import AnswerGenerator
+from ragms.core.query_engine.answer_generator import AnswerGenerationError, AnswerGenerator
 from ragms.core.query_engine.citation_builder import CitationBuilder
 from ragms.core.query_engine.hybrid_search import HybridSearch
 from ragms.core.query_engine.query_processor import QueryProcessor
@@ -19,6 +19,8 @@ from ragms.storage.indexes import BM25Indexer
 
 class QueryEngine:
     """Run the full query pipeline from preprocessing to final response payload."""
+
+    ANSWER_FALLBACK_TEXT = "Answer generation unavailable; inspect the retrieved chunks below."
 
     def __init__(
         self,
@@ -59,11 +61,14 @@ class QueryEngine:
         reranked_result = self.reranker.run_with_fallback(hybrid_result)
         final_candidates = list(reranked_result.top_candidates(processed_query.top_k))
         citations = self.citation_builder.build(final_candidates)
-        answer = self.answer_generator.generate(
-            query=processed_query.normalized_query,
-            candidates=final_candidates,
-            citations=citations,
-        )
+        try:
+            answer = self.answer_generator.generate(
+                query=processed_query.normalized_query,
+                candidates=final_candidates,
+                citations=citations,
+            )
+        except AnswerGenerationError:
+            answer = self.ANSWER_FALLBACK_TEXT
         return self.response_builder.build(
             query=processed_query.normalized_query,
             answer=answer,

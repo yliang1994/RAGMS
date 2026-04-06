@@ -236,10 +236,25 @@ def test_query_engine_runs_end_to_end_and_cli_uses_real_chain(
         lambda built_container, settings=None: build_query_engine(built_container, settings=settings),
     )
 
-    assert run_cli(["--settings", str(tmp_path / "settings.yaml"), "--top-k", "1", "what is rag"]) == 0
+    assert (
+        run_cli(
+            [
+                "--settings",
+                str(tmp_path / "settings.yaml"),
+                "--top-k",
+                "1",
+                "--print-top-chunks",
+                "1",
+                "what is rag",
+            ]
+        )
+        == 0
+    )
     output = capsys.readouterr().out
     assert "Query CLI ready" in output
     assert "Answer: RAG combines retrieval and generation [1]." in output
+    assert "Top Chunks:" in output
+    assert "RAG combines retrieval and generation." in output
 
 
 @pytest.mark.integration
@@ -253,6 +268,75 @@ def test_query_engine_handles_no_result_queries(tmp_path: Path) -> None:
     assert response["answer"] == "No relevant context found for the query."
     assert response["citations"] == []
     assert response["retrieved_chunks"] == []
+
+
+@pytest.mark.integration
+def test_query_engine_returns_retrieved_chunks_when_answer_generation_fails(tmp_path: Path) -> None:
+    class FailingLLM:
+        def generate(self, prompt: str, *, system_prompt: str | None = None) -> str:
+            raise RuntimeError("provider blocked request")
+
+    settings, container = _build_runtime(tmp_path, reranker_provider=None, llm=FailingLLM())
+    engine = build_query_engine(container, settings=settings)
+
+    response = engine.run(query="rag", top_k=2)
+
+    assert response["answer"] == "Answer generation unavailable; inspect the retrieved chunks below."
+    assert len(response["retrieved_chunks"]) == 2
+    assert len(response["citations"]) == 2
+
+
+@pytest.mark.integration
+def test_query_cli_applies_collection_override_before_runtime_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    llm = FakeLLM(["No relevant context found for the query."])
+    settings, container = _build_runtime(tmp_path, reranker_provider=None, llm=llm)
+    captured: dict[str, object] = {}
+
+    class StubEngine:
+        def run(self, **kwargs):
+            captured["run_kwargs"] = dict(kwargs)
+            return {
+                "answer": "No relevant context found for the query.",
+                "citations": [],
+                "retrieved_chunks": [],
+                "debug_info": {},
+            }
+
+    monkeypatch.setattr("scripts.query_cli.load_settings", lambda path: settings)
+
+    def fake_build_container(loaded):
+        captured["container_collection"] = loaded.vector_store.collection
+        return container
+
+    def fake_build_query_engine(_container, settings=None):
+        captured["engine_collection"] = None if settings is None else settings.vector_store.collection
+        return StubEngine()
+
+    monkeypatch.setattr("scripts.query_cli.build_container", fake_build_container)
+    monkeypatch.setattr("scripts.query_cli.build_query_engine", fake_build_query_engine)
+
+    assert (
+        run_cli(
+            [
+                "--settings",
+                str(tmp_path / "settings.yaml"),
+                "--collection",
+                "real_c_ingestion_test",
+                "query",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert "collection=real_c_ingestion_test" in output
+    assert captured["container_collection"] == "real_c_ingestion_test"
+    assert captured["engine_collection"] == "real_c_ingestion_test"
+    assert captured["run_kwargs"]["collection"] == "real_c_ingestion_test"
 
 
 @pytest.mark.integration

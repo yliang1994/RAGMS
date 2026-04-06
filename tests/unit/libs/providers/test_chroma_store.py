@@ -44,6 +44,20 @@ def test_chroma_store_query_respects_filters(tmp_path: Path) -> None:
     assert matches[0]["metadata"]["topic"] == "ops"
 
 
+def test_chroma_store_treats_empty_filter_mapping_as_no_filter(tmp_path: Path) -> None:
+    store = ChromaStore(collection="docs", persist_directory=str(tmp_path / "chroma"))
+    store.add(
+        ids=["a"],
+        vectors=[[0.0, 0.0]],
+        documents=["alpha"],
+        metadatas=[{"topic": "finance"}],
+    )
+
+    matches = store.query([0.0, 0.0], top_k=3, filters={})
+
+    assert [match["id"] for match in matches] == ["a"]
+
+
 def test_chroma_store_returns_empty_results_for_empty_collection(tmp_path: Path) -> None:
     store = ChromaStore(collection="docs", persist_directory=str(tmp_path / "chroma"))
 

@@ -32,6 +32,15 @@ class LLMSettings(StrictModel):
     base_url: str | None = None
 
 
+class LLMOverrideSettings(StrictModel):
+    """Optional LLM overrides that inherit unset values from the primary LLM config."""
+
+    provider: Literal["openai", "qwen", "deepseek"] | None = None
+    model: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+
+
 class EmbeddingSettings(StrictModel):
     """Dense embedding model configuration."""
 
@@ -47,6 +56,8 @@ class IngestionTransformSettings(StrictModel):
 
     enable_llm_chunk_refine: bool = False
     enable_llm_metadata_enrich: bool = False
+    chunk_refine_llm: LLMOverrideSettings = Field(default_factory=LLMOverrideSettings)
+    metadata_enrich_llm: LLMOverrideSettings = Field(default_factory=LLMOverrideSettings)
 
 
 class IngestionSettings(StrictModel):

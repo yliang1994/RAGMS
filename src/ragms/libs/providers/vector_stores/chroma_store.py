@@ -82,7 +82,7 @@ class ChromaStore(BaseVectorStore):
             result = self._collection.query(
                 query_embeddings=[query_vector],
                 n_results=top_k,
-                where=filters,
+                where=(None if not filters else filters),
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as exc:  # pragma: no cover - defensive boundary

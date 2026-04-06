@@ -11,6 +11,16 @@ from ragms.runtime.config import load_settings
 from ragms.runtime.container import build_container
 
 
+def _apply_collection_override(settings, collection: str | None):
+    """Return settings with an optional query-time collection override applied."""
+
+    if not collection:
+        return settings
+    updated = settings.model_copy(deep=True)
+    updated.vector_store.collection = collection
+    return updated
+
+
 def run_cli(argv: Sequence[str] | None = None) -> int:
     """Run the local query CLI against the current query-engine pipeline."""
 
@@ -24,6 +34,12 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--collection", default=None, help="Override the target collection.")
     parser.add_argument("--top-k", type=int, default=3, help="Maximum number of retrieved chunks.")
     parser.add_argument(
+        "--print-top-chunks",
+        type=int,
+        default=0,
+        help="Print the top N retrieved chunks with content previews.",
+    )
+    parser.add_argument(
         "--filters",
         default=None,
         help="Optional JSON metadata filters.",
@@ -35,9 +51,10 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    settings = load_settings(args.settings)
+    base_settings = load_settings(args.settings)
+    settings = _apply_collection_override(base_settings, args.collection)
     container = build_container(settings)
-    requested_collection = args.collection or settings.vector_store.collection
+    requested_collection = settings.vector_store.collection
 
     try:
         engine = build_query_engine(container, settings=settings)
@@ -70,6 +87,8 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
         else:
             print("Citations: none")
         print(f"Retrieved chunks: {len(response['retrieved_chunks'])}")
+        if args.print_top_chunks > 0:
+            _print_top_chunks(response["retrieved_chunks"], limit=args.print_top_chunks)
         if args.return_debug:
             print("Debug:")
             print(json.dumps(response.get("debug_info", {}), ensure_ascii=False, indent=2))
@@ -82,6 +101,37 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
         )
         print(f"Query execution unavailable: {exc}")
     return 0
+
+
+def _print_top_chunks(retrieved_chunks: list[dict[str, object]], *, limit: int) -> None:
+    """Print ranked chunk details for manual inspection."""
+
+    print("Top Chunks:")
+    if not retrieved_chunks:
+        print("(none)")
+        return
+
+    for rank, chunk in enumerate(retrieved_chunks[:limit], start=1):
+        metadata = dict(chunk.get("metadata") or {})
+        source = metadata.get("source_path") or chunk.get("document_id") or "unknown"
+        page = metadata.get("page")
+        route = chunk.get("source_route") or "unknown"
+        score = _select_display_score(chunk)
+        suffix = "" if page is None else f" p.{page}"
+        print(f"[{rank}] route={route} score={score:.6f} source={source}{suffix}")
+        content = " ".join(str(chunk.get("content") or "").split()).strip()
+        print(content if content else "(empty content)")
+
+
+def _select_display_score(chunk: dict[str, object]) -> float:
+    """Return the most relevant score already exposed in the response payload."""
+
+    for key in ("rerank_score", "rrf_score", "score"):
+        value = chunk.get(key)
+        if value is None:
+            continue
+        return float(value)
+    return 0.0
 
 
 if __name__ == "__main__":
