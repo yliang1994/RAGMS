@@ -1,40 +1,22 @@
-"""Minimal local bootstrap entrypoint for the future MCP server."""
+"""Local command-line entrypoint for the RagMS MCP server."""
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Sequence
 
-from ragms.runtime.config import load_settings
-from ragms.runtime.container import build_container
+from ragms.mcp_server.server import run_mcp_server_main as _run_mcp_server_main
 
 
 def run_mcp_server_main(argv: Sequence[str] | None = None) -> int:
-    """Bootstrap the local MCP runtime and print the selected provider set."""
+    """Run bootstrap dry-run mode for direct function callers."""
 
-    parser = argparse.ArgumentParser(description="Run the local RagMS MCP server bootstrap.")
-    parser.add_argument(
-        "--settings",
-        default="settings.yaml",
-        help="Path to the settings.yaml file.",
-    )
-    args = parser.parse_args(list(argv) if argv is not None else None)
-
-    settings = load_settings(args.settings)
-    container = build_container(settings)
-    print(
-        "MCP server bootstrap ready: "
-        f"llm={container.get('llm').implementation} "
-        f"embedding={container.get('embedding').implementation} "
-        f"collection={settings.vector_store.collection}"
-    )
-    return 0
+    return _run_mcp_server_main(argv, serve=False)
 
 
 def main() -> int:
-    """Backward-compatible script entrypoint."""
+    """Start the STDIO MCP server when invoked as a script."""
 
-    return run_mcp_server_main()
+    return _run_mcp_server_main()
 
 
 if __name__ == "__main__":

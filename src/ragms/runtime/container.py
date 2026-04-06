@@ -164,3 +164,9 @@ def build_container(
         if isinstance(exc, RuntimeAssemblyError):
             raise
         raise RuntimeAssemblyError(f"Failed to assemble runtime container: {exc}") from exc
+
+
+def bootstrap_mcp_runtime(settings_path: str | Path = "settings.yaml") -> ServiceContainer:
+    """Build the runtime container used by the MCP server bootstrap."""
+
+    return build_container(settings_path=settings_path)
