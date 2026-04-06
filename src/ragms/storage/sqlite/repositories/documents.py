@@ -16,7 +16,7 @@ class DocumentsRepository:
     def get_by_document_id(self, document_id: str) -> dict[str, Any] | None:
         """Return a document row by document id."""
 
-        row = self.connection.execute(
+        row = self._safe_fetchone(
             """
             SELECT
                 document_id,
@@ -33,13 +33,13 @@ class DocumentsRepository:
             WHERE document_id = ?
             """,
             (document_id,),
-        ).fetchone()
+        )
         return dict(row) if row is not None else None
 
     def get_by_source_path(self, source_path: str) -> dict[str, Any] | None:
         """Return the latest document row by source path."""
 
-        row = self.connection.execute(
+        row = self._safe_fetchone(
             """
             SELECT
                 document_id,
@@ -58,8 +58,18 @@ class DocumentsRepository:
             LIMIT 1
             """,
             (source_path,),
-        ).fetchone()
+        )
         return dict(row) if row is not None else None
+
+    def list_by_document_ids(self, document_ids: list[str]) -> list[dict[str, Any]]:
+        """Return document rows for a set of document ids."""
+
+        return self._list_where("document_id", document_ids)
+
+    def list_by_source_paths(self, source_paths: list[str]) -> list[dict[str, Any]]:
+        """Return document rows for a set of source paths."""
+
+        return self._list_where("source_path", source_paths)
 
     def upsert_document(
         self,
@@ -190,6 +200,55 @@ class DocumentsRepository:
         if stored is None:  # pragma: no cover - defensive boundary
             raise RuntimeError("Failed to update document metadata record")
         return stored
+
+    def _list_where(self, field: str, values: list[str]) -> list[dict[str, Any]]:
+        """Return document rows matching one field against multiple values."""
+
+        normalized = [str(value).strip() for value in values if str(value).strip()]
+        if not normalized:
+            return []
+
+        placeholders = ", ".join("?" for _ in normalized)
+        rows = self._safe_fetchall(
+            f"""
+            SELECT
+                document_id,
+                source_path,
+                source_sha256,
+                status,
+                current_stage,
+                failure_reason,
+                last_ingested_at,
+                version,
+                created_at,
+                updated_at
+            FROM documents
+            WHERE {field} IN ({placeholders})
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            tuple(normalized),
+        )
+        return [dict(row) for row in rows]
+
+    def _safe_fetchone(self, query: str, parameters: tuple[Any, ...]) -> sqlite3.Row | None:
+        """Fetch one row and treat missing tables as empty results."""
+
+        try:
+            return self.connection.execute(query, parameters).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table: documents" in str(exc):
+                return None
+            raise
+
+    def _safe_fetchall(self, query: str, parameters: tuple[Any, ...]) -> list[sqlite3.Row]:
+        """Fetch all rows and treat missing tables as empty results."""
+
+        try:
+            return list(self.connection.execute(query, parameters).fetchall())
+        except sqlite3.OperationalError as exc:
+            if "no such table: documents" in str(exc):
+                return []
+            raise
 
 
 def _utc_now() -> str:

@@ -9,6 +9,12 @@ from typing import Any
 
 from ragms.runtime.settings_models import AppSettings
 from ragms.storage.sqlite.connection import create_sqlite_connection
+from ragms.storage.sqlite.repositories import DocumentsRepository, ImagesRepository
+from ragms.runtime.exceptions import RagMSError
+
+
+class DocumentSummaryNotFoundError(RagMSError):
+    """Raised when a requested document summary cannot be found."""
 
 
 class DataService:
@@ -22,6 +28,8 @@ class DataService:
     ) -> None:
         self.settings = settings
         self.connection = connection or create_sqlite_connection(settings.storage.sqlite.path)
+        self.documents_repository = DocumentsRepository(self.connection)
+        self.images_repository = ImagesRepository(self.connection)
         self._bm25_index_dir = settings.paths.data_dir / "indexes" / "sparse"
         self._image_root = (settings.paths.data_dir / "images").expanduser().resolve()
 
@@ -61,6 +69,45 @@ class DataService:
                 "has_more": has_more,
             },
             "filters": normalized_filters,
+        }
+
+    def get_document_summary(self, document_id: str) -> dict[str, Any]:
+        """Return a document summary assembled from registry, index, and image metadata."""
+
+        document = self.documents_repository.get_by_document_id(document_id)
+        if document is None:
+            raise DocumentSummaryNotFoundError(f"Document not found: {document_id}")
+
+        collection_chunks = self._find_document_chunks(
+            document_id=document_id,
+            source_path=str(document["source_path"]),
+        )
+        matched_chunks = [
+            chunk
+            for chunks in collection_chunks.values()
+            for chunk in chunks
+        ]
+        primary_collection = next(iter(collection_chunks), None)
+        image_rows = self.images_repository.list_by_document_id(document_id)
+
+        return {
+            "document_id": str(document["document_id"]),
+            "source_path": str(document["source_path"]),
+            "collections": list(collection_chunks),
+            "primary_collection": primary_collection,
+            "summary": self._build_document_summary_text(matched_chunks),
+            "structure_outline": self._build_structure_outline(matched_chunks),
+            "key_metadata": self._extract_key_metadata(document, matched_chunks),
+            "ingestion_status": {
+                "status": document.get("status"),
+                "current_stage": document.get("current_stage"),
+                "failure_reason": document.get("failure_reason"),
+                "last_ingested_at": document.get("last_ingested_at"),
+                "version": document.get("version"),
+            },
+            "page_summary": self._build_page_summary(matched_chunks, image_rows),
+            "image_summary": self._build_image_summary(image_rows),
+            "chunk_count": len(matched_chunks),
         }
 
     def _discover_collection_names(self) -> set[str]:
@@ -130,24 +177,13 @@ class DataService:
         *,
         document_ids: list[str],
         source_paths: list[str],
-    ) -> list[sqlite3.Row]:
-        conditions: list[str] = []
-        parameters: list[str] = []
-        if document_ids:
-            conditions.append(f"document_id IN ({', '.join('?' for _ in document_ids)})")
-            parameters.extend(document_ids)
-        if source_paths:
-            conditions.append(f"source_path IN ({', '.join('?' for _ in source_paths)})")
-            parameters.extend(source_paths)
-        if not conditions:
-            return []
-
-        query = """
-            SELECT document_id, source_path, last_ingested_at, updated_at
-            FROM documents
-            WHERE {conditions}
-        """.format(conditions=" OR ".join(conditions))
-        return list(self.connection.execute(query, tuple(parameters)).fetchall())
+    ) -> list[dict[str, Any]]:
+        rows_by_id = self.documents_repository.list_by_document_ids(document_ids)
+        rows_by_source = self.documents_repository.list_by_source_paths(source_paths)
+        merged: dict[str, dict[str, Any]] = {}
+        for row in rows_by_id + rows_by_source:
+            merged[str(row["document_id"])] = row
+        return list(merged.values())
 
     def _count_images_for_collection(self, collection_name: str) -> int:
         collection_root = str((self._image_root / collection_name).resolve())
@@ -160,6 +196,99 @@ class DataService:
             (collection_root, f"{collection_root}/%"),
         ).fetchone()
         return int(row["count"]) if row is not None else 0
+
+    def _find_document_chunks(
+        self,
+        *,
+        document_id: str,
+        source_path: str,
+    ) -> dict[str, list[dict[str, Any]]]:
+        matches: dict[str, list[dict[str, Any]]] = {}
+        normalized_source = str(source_path).strip()
+        for collection_name in sorted(self._discover_collection_names()):
+            snapshot = self._load_bm25_snapshot(collection_name)
+            chunk_matches = []
+            for payload in (snapshot.get("documents") or {}).values():
+                payload_document_id = str(payload.get("document_id") or "").strip()
+                payload_source_path = str(payload.get("source_path") or "").strip()
+                if payload_document_id == document_id or payload_source_path == normalized_source:
+                    chunk_matches.append(dict(payload))
+            if chunk_matches:
+                chunk_matches.sort(key=lambda item: int(item.get("chunk_index", 0) or 0))
+                matches[collection_name] = chunk_matches
+        return matches
+
+    @staticmethod
+    def _build_document_summary_text(chunks: list[dict[str, Any]]) -> str | None:
+        if not chunks:
+            return None
+        for chunk in chunks:
+            metadata = dict(chunk.get("metadata") or {})
+            summary = str(metadata.get("chunk_summary") or "").strip()
+            if summary:
+                return summary
+        content = str(chunks[0].get("content") or "").strip()
+        if not content:
+            return None
+        return content[:240]
+
+    @staticmethod
+    def _build_structure_outline(chunks: list[dict[str, Any]]) -> list[str]:
+        outline: list[str] = []
+        for chunk in chunks:
+            metadata = dict(chunk.get("metadata") or {})
+            section_path = [str(item).strip() for item in metadata.get("section_path") or [] if str(item).strip()]
+            if section_path:
+                label = " / ".join(section_path)
+            else:
+                label = str(metadata.get("chunk_title") or metadata.get("title") or "").strip()
+            if label and label not in outline:
+                outline.append(label)
+        return outline
+
+    @staticmethod
+    def _extract_key_metadata(document: dict[str, Any], chunks: list[dict[str, Any]]) -> dict[str, Any]:
+        first_metadata = dict(chunks[0].get("metadata") or {}) if chunks else {}
+        result = {
+            "source_sha256": document.get("source_sha256"),
+            "doc_type": first_metadata.get("doc_type"),
+            "title": first_metadata.get("title"),
+            "chunk_title": first_metadata.get("chunk_title"),
+            "chunk_tags": list(first_metadata.get("chunk_tags") or []),
+        }
+        return {key: value for key, value in result.items() if value not in (None, [], "")}
+
+    @staticmethod
+    def _build_page_summary(chunks: list[dict[str, Any]], image_rows: list[dict[str, Any]]) -> dict[str, Any]:
+        pages = {
+            int(page)
+            for page in [
+                *(dict(chunk.get("metadata") or {}).get("page") for chunk in chunks),
+                *(row.get("page") for row in image_rows),
+            ]
+            if page is not None
+        }
+        return {
+            "pages": sorted(pages),
+            "page_count": len(pages),
+        }
+
+    @staticmethod
+    def _build_image_summary(image_rows: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "image_count": len(image_rows),
+            "images": [
+                {
+                    "image_id": row.get("image_id"),
+                    "chunk_id": row.get("chunk_id"),
+                    "file_path": row.get("file_path"),
+                    "source_path": row.get("source_path"),
+                    "page": row.get("page"),
+                    "position": row.get("position"),
+                }
+                for row in image_rows
+            ],
+        }
 
     @staticmethod
     def _matches_filters(summary: dict[str, Any], filters: dict[str, Any]) -> bool:
