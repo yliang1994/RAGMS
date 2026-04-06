@@ -1,6 +1,6 @@
 # DEV_SPEC
 
-Version: `1.0.3`
+Version: `1.0.4`
 
 ## 目录
 
@@ -3003,67 +3003,95 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 
 #### 阶段 E：MCP Server 层与 Tools 落地
 
-目标：完成基于 STDIO Transport 的 MCP Server 落地，稳定暴露 `query_knowledge_hub`、`ingest_documents`、`list_collections`、`get_document_summary` 四类核心工具，完成 tool schema、参数校验、统一错误语义、引用透明和结构化响应契约；同时为后续阶段接入 `get_trace_detail` 与 `evaluate_collection` 预留稳定扩展点。
+目标：完成基于 STDIO Transport 的 MCP Server 落地，稳定暴露 `query_knowledge_hub`、`ingest_documents`、`list_collections`、`get_document_summary` 四类核心工具，补齐 server 生命周期、tool 注册中心、schema 校验、统一协议响应、引用透明、多模态图文返回与真实子进程 STDIO E2E 验收；同时为后续阶段接入 `get_trace_detail` 与 `evaluate_collection` 预留稳定扩展点。
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| E1 | 实现 MCP Server 启动入口与生命周期 | [ ] |  |  |
+| E1 | 实现 MCP Server 启动入口、STDIO 边界与生命周期 | [ ] |  |  |
 | E2 | 实现 Tool Registry 与 Tool 元数据声明 | [ ] |  |  |
-| E3 | 实现 Schema 定义与参数校验 | [ ] |  |  |
+| E3 | 实现 Schema 定义、默认值注入与参数校验 | [ ] |  |  |
 | E4 | 实现统一协议响应包装与错误收敛 | [ ] |  |  |
-| E5 | 实现 `query_knowledge_hub` Tool | [ ] |  |  |
+| E5 | 实现 `query_knowledge_hub` Tool 与完整响应契约 | [ ] |  |  |
 | E6 | 实现 `ingest_documents` Tool | [ ] |  |  |
 | E7 | 实现 `list_collections` Tool | [ ] |  |  |
 | E8 | 实现 `get_document_summary` Tool | [ ] |  |  |
 | E9 | 完成核心工具 MCP 集成测试与 STDIO E2E 验收 | [ ] |  |  |
 
-##### E1 实现 MCP Server 启动入口与生命周期
+##### E1 实现 MCP Server 启动入口、STDIO 边界与生命周期
 
-- 目标：建立 MCP Server 主进程骨架，固定“配置加载 -> 容器装配 -> Server 创建 -> Tool 注册 -> STDIO 监听 -> 优雅退出”的生命周期。
+- 目标：建立 MCP Server 主进程骨架，固定“配置加载 -> 容器装配 -> Server 创建 -> Tool 注册 -> STDIO 监听 -> 优雅退出”的生命周期，并明确 `stdout` 只承载 MCP 协议消息、日志固定写入 `stderr` 的运行边界；同时负责 `initialize` 请求的接入、初始化能力协商与 `serverInfo/capabilities.tools` 返回。
 - 修改文件：`src/ragms/mcp_server/server.py`、`src/ragms/runtime/container.py`、`scripts/run_mcp_server.py`、`tests/unit/mcp_server/test_server_bootstrap.py`
-- 实现类/函数：`create_server()`、`run_mcp_server_main()`、`bootstrap_mcp_runtime()`
+- 实现类/函数：`create_server()`、`run_mcp_server_main()`、`bootstrap_mcp_runtime()`、`handle_initialize()`
 - 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install mcp`，补齐 E 阶段 MCP Server 与协议测试依赖。
-- 验收标准：Server 可通过脚本正常启动；启动阶段可完成依赖装配并进入监听状态；初始化失败时会返回统一异常并安全退出，不留下半初始化状态。
+- 验收标准：
+  - Server 可通过脚本正常启动，启动阶段可完成依赖装配并进入监听状态。
+  - `initialize` 请求可被稳定处理，并返回正确的 `serverInfo` 与 `capabilities.tools`；初始化响应内容与实际注册工具集合保持一致。
+  - `stdout` 中仅出现 MCP 协议消息，不输出普通日志、调试打印或初始化提示；运行日志、告警和异常诊断统一落到 `stderr`。
+  - 初始化失败时会返回统一异常并安全退出，不留下半初始化状态。
+  - 生命周期边界与 3.2 节保持一致，不在 MCP Server 层引入 HTTP 服务或额外 transport。
 - 测试方法：`pytest tests/unit/mcp_server/test_server_bootstrap.py`
 
 ##### E2 实现 Tool Registry 与 Tool 元数据声明
 
-- 目标：集中定义所有对外 MCP tools 的名称、描述、输入输出 schema 绑定关系和处理函数映射，避免 tool 声明散落在多个模块。
+- 目标：集中定义所有对外 MCP tools 的名称、描述、输入输出 schema 绑定关系和处理函数映射，避免 tool 声明散落在多个模块，并明确 `tools/list` 由注册表作为单一事实来源驱动输出。
 - 修改文件：`src/ragms/mcp_server/tool_registry.py`、`src/ragms/mcp_server/server.py`、`tests/unit/mcp_server/test_tool_registry.py`
-- 实现类/函数：`build_tool_registry()`、`register_tools()`、`ToolDefinition`
-- 验收标准：当前阶段交付的四类核心工具均可在注册表中集中声明，并为后续 `get_trace_detail`、`evaluate_collection` 接入预留扩展点；tool 名称、描述、schema 和 handler 绑定关系一致；重复注册、未知 handler 或缺失 schema 会被快速拦截。
+- 实现类/函数：`build_tool_registry()`、`register_tools()`、`list_tool_definitions()`、`ToolDefinition`
+- 验收标准：
+  - 当前阶段交付的四类核心工具均可在注册表中集中声明，并为后续 `get_trace_detail`、`evaluate_collection` 接入预留扩展点。
+  - `tools/list` 返回的 `name`、`description`、`inputSchema` 与注册表声明一一对应，不允许 server 侧手写重复元数据或绕过注册表拼装结果。
+  - tool 名称、描述、schema 和 handler 绑定关系一致；重复注册、未知 handler、缺失 schema 或重复 tool name 会被快速拦截。
 - 测试方法：`pytest tests/unit/mcp_server/test_tool_registry.py`
 
-##### E3 实现 Schema 定义与参数校验
+##### E3 实现 Schema 定义、默认值注入与参数校验
 
 - 目标：为阶段 E 交付的四类核心工具建立独立的请求/响应 schema，并在协议层完成统一的参数校验、默认值注入和类型错误提示，同时为后续 Trace / Evaluation tool 扩展保留兼容空间。
 - 修改文件：`src/ragms/mcp_server/schemas.py`、`src/ragms/mcp_server/protocol_handler.py`、`tests/unit/mcp_server/test_schemas.py`
 - 实现类/函数：`QueryToolRequest`、`IngestToolRequest`、`CollectionToolRequest`、`DocumentSummaryRequest`、`ProtocolHandler.validate_arguments()`
-- 验收标准：各 tool 的必填参数、默认参数和类型约束明确；非法输入会在进入业务逻辑前被拦截；校验错误信息可直接暴露给 MCP Client 使用。
+- 验收标准：
+  - 各 tool 的必填参数、默认参数和类型约束明确，且与 3.2.2 表格中公开的对外能力保持一致。
+  - `query_knowledge_hub` 至少覆盖 `query`、`collection`、`top_k`、`filters`、`return_debug`；`ingest_documents` 至少覆盖 `paths`、`collection`、`force_rebuild`、`options`；其余两个工具分别覆盖集合浏览与文档摘要所需最小参数。
+  - 非法输入会在进入业务逻辑前被拦截；默认值注入结果稳定；校验错误信息可直接暴露给 MCP Client 使用，但不泄露内部实现细节。
 - 测试方法：`pytest tests/unit/mcp_server/test_schemas.py`
 
 ##### E4 实现统一协议响应包装与错误收敛
 
-- 目标：实现 MCP 响应包装器，统一生成 `content`、`structuredContent`、错误响应和可选调试字段，确保 tool 层不重复处理协议细节。
+- 目标：实现 MCP 协议适配辅助层，负责工具调用入参校验、成功响应包装、错误响应收敛与异常序列化；`initialize`、`tools/list`、`tools/call` 的协议路由与能力协商仍由 `server.py` 基于 MCP SDK 负责，避免与 server 生命周期和 transport 层职责重叠。
 - 修改文件：`src/ragms/mcp_server/protocol_handler.py`、`src/ragms/mcp_server/schemas.py`、`tests/unit/mcp_server/test_protocol_handler.py`
-- 实现类/函数：`ProtocolHandler.handle()`、`ProtocolHandler.build_success_response()`、`ProtocolHandler.build_error_response()`、`ProtocolHandler.serialize_exception()`
-- 验收标准：成功响应可统一输出人类可读内容和结构化内容；错误响应可稳定收敛参数错误、业务错误和内部异常；未知 tool、非法参数、底层异常都不会泄露原始栈信息。
+- 实现类/函数：`ProtocolHandler.validate_arguments()`、`ProtocolHandler.build_success_response()`、`ProtocolHandler.build_error_response()`、`ProtocolHandler.serialize_exception()`
+- 验收标准：
+  - `ProtocolHandler` 仅承担协议适配辅助职责，不重复实现 MCP SDK 已提供的 server method 分发逻辑；与 3.2.3、5.3.2 中的分层建议保持一致。
+  - `tools/call` 进入具体业务 handler 前，会经过统一的 schema 校验、默认值注入和参数标准化。
+  - 成功响应可统一输出人类可读 `content`、机器可解析 `structuredContent` 和可选调试字段，保持契约稳定。
+  - 错误响应遵循 JSON-RPC 2.0 基础错误语义：`-32600`、`-32601`、`-32602`、`-32603` 的映射清晰稳定。
+  - 未知 tool、非法参数、底层异常都不会泄露原始栈信息；必要的错误摘要可被 MCP Client 直接展示或记录。
 - 测试方法：`pytest tests/unit/mcp_server/test_protocol_handler.py`
 
 ##### E5 实现 `query_knowledge_hub` Tool
 
-- 目标：落地查询工具，完成 Query Engine 结果到 MCP 输出的适配，并保证引用透明和 `trace_id` 透传。
-- 修改文件：`src/ragms/mcp_server/tools/query.py`、`src/ragms/core/query_engine/response_builder.py`、`tests/unit/mcp_server/tools/test_query_tool.py`、`tests/integration/test_mcp_server_query.py`
-- 实现类/函数：`handle_query_knowledge_hub()`、`build_query_structured_content()`、`build_query_markdown_content()`
-- 验收标准：工具可接收 `query`、`collection`、`top_k`、`filters`、`return_debug` 等参数；返回结果包含回答、`structuredContent.citations`、候选摘要和 `trace_id`；Markdown 中的 `[1]`、`[2]` 与结构化引用编号一一对应；无结果和 fallback 场景说明明确。
-- 测试方法：`pytest tests/unit/mcp_server/tools/test_query_tool.py tests/integration/test_mcp_server_query.py`
+- 目标：落地查询工具，完成 Query Engine 结果到 MCP 输出的适配，并一次性交付文本回答、引用透明、结构化候选摘要、`trace_id` 透传以及图片命中时的 `TextContent + ImageContent` 完整响应契约。
+- 修改文件：`src/ragms/mcp_server/tools/query.py`、`src/ragms/core/query_engine/response_builder.py`、`src/ragms/core/query_engine/citation_builder.py`、`src/ragms/storage/sqlite/repositories/images.py`、`src/ragms/storage/images/image_storage.py`、`tests/unit/core/query_engine/test_response_builder.py`、`tests/unit/mcp_server/tools/test_query_tool.py`、`tests/integration/test_mcp_server_query.py`、`tests/e2e/test_mcp_tool_contracts.py`
+- 实现类/函数：`handle_query_knowledge_hub()`、`build_query_structured_content()`、`build_query_markdown_content()`、`build_multimodal_contents()`、`load_image_payloads()`、`encode_image_as_base64()`
+- 验收标准：
+  - 工具可接收 `query`、`collection`、`top_k`、`filters`、`return_debug` 等参数，并把参数稳定透传到 Query Flow。
+  - 返回结果包含回答正文、`structuredContent.citations`、候选摘要和 `trace_id`；当 `return_debug=true` 时，可附带受控的调试字段。
+  - Markdown 中的 `[1]`、`[2]` 与结构化引用编号一一对应，符合 3.2.1 的引用透明要求。
+  - `structuredContent.citations` 至少包含 `index`、`document_id`、`chunk_id`、`source_path`、`page_range`、`section_title`、`snippet`；如有可用分数信息，可额外暴露 `score` 或等价排序字段。
+  - 当检索命中的 chunk 携带 `image_refs` 时，系统可通过图片索引查到原始文件路径并组装 `ImageContent`。
+  - 返回的 `content` 中可同时包含 `type=text` 与 `type=image` 条目；`mimeType`、`data`、图片顺序和去重逻辑稳定可预测。
+  - `data` 采用 base64 编码，不在响应中直接泄露不安全本地绝对路径。
+  - 无结果时返回友好提示与空引用列表，而不是空 `content`；当证据不足或 reranker / answer generation 发生 fallback 时，返回中需显式说明，不伪造引用。
+  - 图片文件缺失、损坏或读取失败时，不阻塞文本回答返回；可安全降级为仅返回文本与引用，但不破坏整体响应结构。
+- 测试方法：`pytest tests/unit/core/query_engine/test_response_builder.py tests/unit/mcp_server/tools/test_query_tool.py tests/integration/test_mcp_server_query.py tests/e2e/test_mcp_tool_contracts.py`
 
 ##### E6 实现 `ingest_documents` Tool
 
 - 目标：落地摄取工具，完成批量路径受理、增量跳过、强制重建等参数适配，并将摄取结果标准化为 MCP 输出。
 - 修改文件：`src/ragms/mcp_server/tools/ingest.py`、`scripts/ingest_documents.py`、`tests/unit/mcp_server/tools/test_ingest_tool.py`、`tests/integration/test_mcp_server_ingest.py`
 - 实现类/函数：`handle_ingest_documents()`、`normalize_ingest_request()`、`serialize_ingestion_result()`
-- 验收标准：工具支持单路径和多路径摄取；支持 `collection`、`force_rebuild`、`options` 等参数；返回结果包含文档级状态、跳过/失败摘要、受理统计和 `trace_id`；部分文档失败时整体响应结构仍稳定。
+- 验收标准：
+  - 工具支持单路径和多路径摄取；支持 `collection`、`force_rebuild`、`options` 等参数，并与 C 阶段 CLI 能力保持一致语义。
+  - 返回结果包含文档级状态、跳过/失败摘要、受理统计和 `trace_id`；部分文档失败时整体响应结构仍稳定。
+  - 工具仅负责参数归一化、链路调用和结果包装，不在 MCP 层重复实现 Ingestion Pipeline 内部业务逻辑。
 - 测试方法：`pytest tests/unit/mcp_server/tools/test_ingest_tool.py tests/integration/test_mcp_server_ingest.py`
 
 ##### E7 实现 `list_collections` Tool
@@ -3071,7 +3099,10 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 - 目标：落地集合浏览工具，返回可供 Agent 做预检查和集合选择的基础统计信息。
 - 修改文件：`src/ragms/mcp_server/tools/collections.py`、`src/ragms/core/management/data_service.py`、`tests/unit/mcp_server/tools/test_collections_tool.py`
 - 实现类/函数：`handle_list_collections()`、`serialize_collection_summary()`、`DataService.list_collections()`
-- 验收标准：工具可返回集合名、文档数、chunk 数、更新时间等摘要字段；支持空集合和无结果场景；输出结构稳定，便于客户端直接消费。
+- 验收标准：
+  - 工具可返回集合名、文档数、chunk 数、图片数、最近更新时间等摘要字段；支持空集合和无结果场景。
+  - 输出结构稳定，便于客户端直接消费；如分页或过滤参数暂不在本阶段实现，需要在 schema 与返回中保留兼容扩展空间。
+  - 集合统计来源与底层元数据状态一致，不直接依赖手工扫描目录结果作为唯一事实来源。
 - 测试方法：`pytest tests/unit/mcp_server/tools/test_collections_tool.py`
 
 ##### E8 实现 `get_document_summary` Tool
@@ -3079,15 +3110,23 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 - 目标：落地文档摘要工具，支持按 `document_id` 回溯文档摘要、结构概览和最新摄取状态。
 - 修改文件：`src/ragms/mcp_server/tools/documents.py`、`src/ragms/core/management/data_service.py`、`src/ragms/storage/sqlite/repositories/documents.py`、`tests/unit/mcp_server/tools/test_documents_tool.py`
 - 实现类/函数：`handle_get_document_summary()`、`serialize_document_summary()`、`DataService.get_document_summary()`
-- 验收标准：工具可返回文档摘要、章节概览、来源路径、关键 metadata、摄取状态及必要的图片/页码摘要；文档不存在或状态不完整时返回语义清晰的错误或空结果。
+- 验收标准：
+  - 工具可返回文档摘要、章节概览、来源路径、关键 metadata、最新 ingestion 状态及必要的图片/页码摘要。
+  - 文档不存在、文档状态不完整或关联索引缺失时，返回语义清晰的错误或空结果，不抛出未收敛异常。
+  - 返回结构与 Dashboard / 管理读服务使用的数据口径保持一致，避免 MCP 和 Dashboard 各自维护一套文档摘要定义。
 - 测试方法：`pytest tests/unit/mcp_server/tools/test_documents_tool.py`
 
 ##### E9 完成核心工具 MCP 集成测试与 STDIO E2E 验收
 
-- 目标：完成进程内集成测试和真实子进程 STDIO E2E 测试，验证初始化、工具发现、四类核心工具调用、异常返回与进程退出行为。
+- 目标：完成进程内集成测试和真实子进程 STDIO E2E 测试，验证初始化、工具发现、四类核心工具调用、多模态响应、异常返回与进程退出行为。
 - 修改文件：`tests/integration/test_mcp_server.py`、`tests/integration/test_mcp_server_query.py`、`tests/integration/test_mcp_server_ingest.py`、`tests/integration/test_mcp_server_documents.py`、`tests/e2e/test_mcp_stdio_flow.py`、`tests/e2e/test_mcp_tool_contracts.py`
 - 实现类/函数：`start_stdio_server_process()`、`call_mcp_tool()`、`assert_mcp_response_contract()`
-- 验收标准：模拟 MCP Client 可完成初始化、列出工具并调用四类核心工具；`content` / `structuredContent` 契约在真实 STDIO 边界下成立；异常请求不会导致服务崩溃；阶段 E 完成后系统已具备可被本地 Agent 直接接入的稳定 MCP 核心能力。
+- 验收标准：
+  - 模拟 MCP Client 可完成 `initialize`、`tools/list`、`tools/call` 三类核心请求，并调用四类核心工具。
+  - `content` / `structuredContent` 契约在真实 STDIO 边界下成立；带引用回答、空结果回答、带图片回答三类典型响应都可被断言。
+  - `stdout` 不被普通日志污染，`stderr` 中的日志不会破坏协议通信；异常请求、非法参数和业务异常不会导致服务崩溃。
+  - 测试环境遵循第 4 章分层原则：单元测试优先 mock 外部依赖，集成测试使用隔离临时目录和 fake provider，E2E 测试通过真实子进程验证协议边界。
+  - 阶段 E 完成后，系统已具备可被本地 Agent 直接接入的稳定 MCP 核心能力，并为 F/H 阶段扩展工具保留兼容空间。
 - 测试方法：`pytest tests/integration/test_mcp_server.py tests/integration/test_mcp_server_query.py tests/integration/test_mcp_server_ingest.py tests/integration/test_mcp_server_documents.py tests/e2e/test_mcp_stdio_flow.py tests/e2e/test_mcp_tool_contracts.py`
 
 #### 阶段 F：Trace 基础设施与打点
