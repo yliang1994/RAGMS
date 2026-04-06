@@ -1,11 +1,11 @@
-"""Pydantic request schemas for MCP tool arguments."""
+"""Pydantic request schemas and protocol payload helpers for MCP tools."""
 
 from __future__ import annotations
 
 from typing import Any, TypeAlias
 
+from mcp import types
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from pydantic.types import StringConstraints
 
 from ragms.runtime.exceptions import RagMSError
 
@@ -16,6 +16,14 @@ JSONMapping: TypeAlias = dict[str, Any]
 
 class SchemaValidationError(RagMSError):
     """Raised when MCP tool arguments fail schema validation."""
+
+
+class ProtocolError(BaseModel):
+    """Structured JSON-RPC style error payload for tool responses."""
+
+    code: int
+    message: str
+    data: JSONMapping | None = None
 
 
 class BaseToolRequest(BaseModel):
@@ -108,3 +116,9 @@ def validate_tool_arguments(tool_name: str, arguments: JSONMapping | None) -> Ba
         location = ".".join(str(item) for item in error.get("loc", ())) or tool_name
         message = error.get("msg", "Invalid parameters")
         raise SchemaValidationError(f"Invalid arguments for {tool_name}.{location}: {message}") from exc
+
+
+def build_text_content(text: str) -> types.TextContent:
+    """Create a plain-text MCP content block."""
+
+    return types.TextContent(type="text", text=text)

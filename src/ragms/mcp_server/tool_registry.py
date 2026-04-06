@@ -8,8 +8,10 @@ from typing import Any, Callable
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools.base import Tool
 
+from ragms.mcp_server.tools import bind_query_tool
 from ragms.mcp_server.schemas import get_input_schema
 from ragms.runtime.exceptions import RagMSError
+from ragms.runtime.container import ServiceContainer
 
 
 ToolHandler = Callable[..., Any]
@@ -118,6 +120,7 @@ def _evaluate_collection(
 
 
 def build_tool_registry(
+    runtime: ServiceContainer | None = None,
     definitions: list[ToolDefinition] | None = None,
 ) -> dict[str, ToolDefinition]:
     """Build the MCP tool registry as the single source of truth for tool metadata."""
@@ -126,7 +129,7 @@ def build_tool_registry(
         ToolDefinition(
             name="query_knowledge_hub",
             description="执行知识库检索、融合、重排与回答生成，是面向 Agent 的核心查询入口。",
-            handler=_query_knowledge_hub,
+            handler=_query_knowledge_hub if runtime is None else bind_query_tool(runtime),
             input_schema=get_input_schema("query_knowledge_hub"),
         ),
         ToolDefinition(

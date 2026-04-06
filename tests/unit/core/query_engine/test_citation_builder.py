@@ -26,8 +26,10 @@ def test_citation_builder_numbers_candidates_and_preserves_source_details() -> N
             "chunk_id": "chunk-1",
             "document_id": "doc-1",
             "source_path": "docs/rag.pdf",
-            "page": 3,
+            "page_range": {"start": 3, "end": 3},
+            "section_title": None,
             "source_ref": "§1.2",
+            "score": 0.9,
             "snippet": "RAG overview",
         }
     ]

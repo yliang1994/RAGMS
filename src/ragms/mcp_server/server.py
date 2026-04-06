@@ -44,7 +44,7 @@ def create_server(
         ),
         log_level=log_level.upper(),
     )
-    tool_registry = build_tool_registry()
+    tool_registry = build_tool_registry(runtime=runtime)
     register_tools(server, tool_registry)
     setattr(server, "runtime_container", runtime)
     setattr(server, "tool_registry", tool_registry)

@@ -37,7 +37,7 @@ def test_build_tool_registry_rejects_duplicate_names() -> None:
     ]
 
     with pytest.raises(ToolRegistryError, match="Duplicate tool definition: dup_tool"):
-        build_tool_registry(duplicate_definitions)
+        build_tool_registry(definitions=duplicate_definitions)
 
 
 def test_tool_definition_rejects_invalid_handler_or_schema() -> None:
@@ -69,14 +69,15 @@ def test_register_tools_uses_registry_as_single_source_of_truth() -> None:
     )
     server = create_server(runtime)
 
-    assert getattr(server, "tool_registry") == registry
+    server_registry = getattr(server, "tool_registry")
+    assert list(server_registry) == list(registry)
     mcp_tools = anyio.run(server.list_tools)
     listed_names = [tool.name for tool in mcp_tools]
 
     assert listed_names == [definition.name for definition in list_tool_definitions(registry)]
     query_tool = next(tool for tool in mcp_tools if tool.name == "query_knowledge_hub")
-    assert query_tool.description == registry["query_knowledge_hub"].description
-    assert query_tool.inputSchema == registry["query_knowledge_hub"].input_schema
+    assert query_tool.description == server_registry["query_knowledge_hub"].description
+    assert query_tool.inputSchema == server_registry["query_knowledge_hub"].input_schema
 
 
 def test_register_tools_keeps_existing_duplicate_registration_stable() -> None:

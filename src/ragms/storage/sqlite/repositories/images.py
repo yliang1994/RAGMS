@@ -71,6 +71,38 @@ class ImagesRepository:
             results.append(payload)
         return results
 
+    def list_by_chunk_ids(self, chunk_ids: list[str]) -> list[dict[str, Any]]:
+        """Return all image mappings for a list of chunk ids."""
+
+        if not chunk_ids:
+            return []
+        placeholders = ", ".join("?" for _ in chunk_ids)
+        rows = self.connection.execute(
+            f"""
+            SELECT
+                image_id,
+                document_id,
+                chunk_id,
+                file_path,
+                source_path,
+                image_hash,
+                page,
+                position_json,
+                created_at,
+                updated_at
+            FROM images
+            WHERE chunk_id IN ({placeholders})
+            ORDER BY chunk_id, image_id
+            """,
+            tuple(chunk_ids),
+        ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            payload = dict(row)
+            payload["position"] = json.loads(str(payload.pop("position_json") or "{}"))
+            results.append(payload)
+        return results
+
     def upsert_image(
         self,
         *,

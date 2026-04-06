@@ -1,8 +1,9 @@
-"""Filesystem-backed image persistence for ingestion assets."""
+"""Filesystem-backed image persistence and retrieval for ingestion assets."""
 
 from __future__ import annotations
 
 import hashlib
+import base64
 from pathlib import Path
 from typing import Any
 
@@ -46,3 +47,16 @@ class ImageStorage:
             "created": not existed,
             "updated": existed and target_path.read_bytes() == image_bytes,
         }
+
+    def read_image(self, file_path: str | Path) -> bytes:
+        """Read raw image bytes from managed storage."""
+
+        target = Path(file_path).expanduser().resolve()
+        if not target.is_file():
+            raise FileNotFoundError(f"Image file does not exist: {target}")
+        return target.read_bytes()
+
+    def encode_image_as_base64(self, file_path: str | Path) -> str:
+        """Read one image and return base64-encoded bytes."""
+
+        return base64.b64encode(self.read_image(file_path)).decode("ascii")
