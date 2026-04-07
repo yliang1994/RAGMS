@@ -2074,8 +2074,8 @@ RAGMS/                                                         # 项目根目录
 | `core/management/data_service.py` | 为 Dashboard 提供集合统计、文档列表、Chunk 详情、图片预览等只读数据能力。 | collection 统计聚合、Chroma 元数据查询、图片列表聚合、系统总览指标收敛。 |
 | `core/management/document_admin_service.py` | 负责文档摄取触发、删除、重建和管理操作。 | 以服务层收敛摄取入口、Chroma 删除、BM25 索引移除、图片删除、完整性记录清理。 |
 | `core/management/trace_service.py` | 提供 Trace 列表、筛选、摘要、详情、失败聚合和对比查询能力，作为 Dashboard 与 MCP 的只读服务层。 | 读取 `logs/traces.jsonl`、按 `trace_type/status/collection` 过滤、按 `trace_id` 返回链路详情、最近失败聚合、trace 对比、对损坏日志容错。 |
-| `core/evaluation/report_service.py` | 管理评估报告的读取、对比与写入能力。 | 报告落盘、只读摘要与详情查询、运行列表聚合、供 Dashboard 评估面板复用。 |
-| `core/evaluation/runner.py` | 执行检索/问答评估任务。 | 多评估后端组合、批量运行、结果汇总。 |
+| `core/evaluation/report_service.py` | 管理评估报告的读取、写入、基线标记与实验对比能力。 | 报告落盘、`run_id`/baseline 元数据管理、摘要与详情查询、跨运行对比、供 Dashboard / MCP / CLI 复用。 |
+| `core/evaluation/runner.py` | 执行检索/问答评估任务，并作为 Dashboard / MCP / CLI 共享的评估编排入口。 | 多评估后端组合、批量运行、Evaluation Trace 透传、结果汇总。 |
 | `core/evaluation/dataset_loader.py` | 加载并标准化评估数据集。 | 数据集 schema 统一、离线评估输入收敛。 |
 | `core/evaluation/metrics/` | 实现检索指标与回答质量指标。 | `hit_rate`、`MRR`、`context_precision`、`answer_relevancy` 等。 |
 | `core/trace_collector/trace_manager.py` | 管理一次请求的 Trace 生命周期。 | `trace_id` 生成、阶段注册、异常捕获、状态聚合与未结束阶段自动收敛，不直接承担文件 IO 细节。 |
@@ -2496,11 +2496,11 @@ dashboard:
 | 阶段 C | 17 | 17 | 100% |
 | 阶段 D | 8 | 8 | 100% |
 | 阶段 E | 9 | 9 | 100% |
-| 阶段 F | 6 | 0 | 0% |
+| 阶段 F | 6 | 1 | 17% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **54** | **65.9%** |
+| **总计** | **82** | **55** | **67.1%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -3162,7 +3162,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| F1 | 实现 Trace Schema、StageRecorder 与 TraceManager | [ ] |  |  |
+| F1 | 实现 Trace Schema、StageRecorder 与 TraceManager | [x] | 2026-04-07 | trace schema, stage recorder, and lifecycle manager tests passed |
 | F2 | 实现 JSONL 持久化、TraceRepository 与 Trace Logger | [ ] |  |  |
 | F3 | 为 Ingestion 打点并回传 `trace_id` | [ ] |  |  |
 | F4 | 为 Query 打点并回传 `trace_id` | [ ] |  |  |
@@ -3455,51 +3455,96 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 
 #### 阶段 H：评估体系
 
-目标：基于第 3.3.4 节评估框架抽象、第 4.3 节质量评估目标、第 5 章模块边界以及阶段 A-G 已交付的摄取、检索、MCP、Trace 与 Dashboard 能力，完成“可运行、可比较、可回归、可收口”的评估体系。阶段 H 不是单独补一个 evaluator，而是要把 `dataset -> evaluator -> runner -> report -> dashboard -> MCP tool -> regression gate` 整条质量闭环打通；阶段 H 完成后，系统必须能够对指定 collection 执行真实评估、生成结构化报告、在 Dashboard 中查看和比较实验结果、通过 MCP Tool 远程触发评估，并且补齐所有此前阶段遗留但会影响评估闭环与质量达标的未完成部分，使系统在进入阶段 I 前不再存在 A-G 的前置阻塞项。
+目标：基于第 3.3.4 节评估框架抽象、第 3.4.2 节 `EvaluationTrace` 契约、第 4.3 节质量评估目标、第 5 章模块边界以及阶段 A-G 已交付的摄取、检索、MCP、Trace 与 Dashboard 能力，完成“可运行、可比较、可回归、可收口”的评估体系。阶段 H 的交付不是单个 evaluator，而是把 `dataset -> evaluator -> runner -> report -> baseline -> dashboard -> MCP tool -> regression gate` 整条质量闭环打通；阶段 H 完成后，系统必须能够对指定 `collection` 和 `dataset_version` 执行真实评估，生成稳定 `run_id` 的结构化报告，在 Dashboard 中直接发起评估、查看结果与 baseline 对比，通过 MCP Tool 远程触发评估，并形成固定阈值的回归闸门；任何仍会阻塞质量闭环的 A-G 遗留问题都必须在阶段 H 内收口，不得带入阶段 I。
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| H1 | 收敛评估输入契约并补齐 A-G 前置遗留项 | [ ] |  |  |
-| H2 | 建立 golden test set、坏 case 集与数据集加载器 | [ ] |  |  |
-| H3 | 实现检索指标与自定义指标评估器 | [ ] |  |  |
-| H4 | 实现 `RagasEvaluator` 与评估后端适配层 | [ ] |  |  |
+| H1 | 收敛评估输入、报告 schema 与前置依赖 | [ ] |  |  |
+| H2 | 建立 golden/badcase 数据集、manifest 规范与加载器 | [ ] |  |  |
+| H3 | 实现确定性指标与固定阈值回归测试 | [ ] |  |  |
+| H4 | 实现 `RagasEvaluator`、`DeepEvalEvaluator` 与后端适配层 | [ ] |  |  |
 | H5 | 实现 `CompositeEvaluator`、工厂装配与配置切换 | [ ] |  |  |
-| H6 | 实现 `EvalRunner`、评估报告落盘与实验对比元数据 | [ ] |  |  |
-| H7 | 打通 Dashboard 真实评估结果、趋势展示与 baseline 管理 | [ ] |  |  |
-| H8 | 接入 `evaluate_collection` MCP Tool | [ ] |  |  |
-| H9 | 基于评估结果完成质量门槛达标与前序阶段收口 | [ ] |  |  |
+| H6 | 实现 `EvalRunner`、`EvaluationTrace` 与报告持久化 | [ ] |  |  |
+| H7 | 实现 baseline 管理与稳定对比契约 | [ ] |  |  |
+| H8 | 打通 Dashboard 评估工作台与真实运行入口 | [ ] |  |  |
+| H9 | 接入 `evaluate_collection` MCP Tool | [ ] |  |  |
+| H10 | 基于评估结果完成质量门槛与前序阶段收口 | [ ] |  |  |
 
-##### H1 收敛评估输入契约并补齐 A-G 前置遗留项
+##### H1 收敛评估输入、报告 schema 与前置依赖
 
-- 目标：先收敛评估链路所依赖的输入契约，把阶段 A-G 中所有会阻塞评估闭环的遗留问题在本任务内补齐，而不是留到后续阶段被动修补。
-- 修改文件：`src/ragms/core/models/retrieval.py`、`src/ragms/core/models/response.py`、`src/ragms/core/query_engine/response_builder.py`、`src/ragms/core/query_engine/citation_builder.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/runtime/settings_models.py`
-- 实现类/函数：`normalize_evaluation_sample()`、`build_evaluation_input()`、`snapshot_runtime_config()`
-- 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install ragas deepeval datasets`，补齐 H 阶段评估后端、数据集读取与实验运行依赖。
-- 验收标准：评估输入统一包含 `query`、`retrieved_chunks`、`generated_answer`、`ground_truth`、`citations`、`trace_id`、`collection`、`config_snapshot`、`dataset_version` 等核心字段；Query / MCP / Dashboard / Report 之间对样本 ID、引用、配置快照和 trace 关联的口径一致；凡是 A-G 中阻塞评估闭环的未完成部分，必须在本任务内补齐并同步更新相关测试。
-- 测试方法：`pytest tests/integration/test_query_engine.py tests/integration/test_mcp_server_query.py tests/integration/test_trace_write_and_read.py`
+- 目标：先把评估链路依赖的数据契约固定下来，包括样本输入、报告输出、配置快照和 Trace 关联口径；任何 A-G 中会阻塞评估闭环的遗留问题都必须在本任务内补齐，而不是留到后续任务边做边修。
+- 修改文件：`src/ragms/core/models/evaluation.py`、`src/ragms/core/models/retrieval.py`、`src/ragms/core/models/response.py`、`src/ragms/core/query_engine/response_builder.py`、`src/ragms/core/query_engine/citation_builder.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/runtime/settings_models.py`
+- 实现类/函数：`normalize_evaluation_sample()`、`build_evaluation_input()`、`snapshot_runtime_config()`、`EvaluationSample.to_dict()`、`EvaluationRunSummary.to_dict()`
+- 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install ragas deepeval datasets pandas`，补齐 H 阶段评估后端、数据集读取与本地报告处理依赖。
+- 评估样本最小字段固定为：`sample_id`、`query`、`collection`、`filters`、`expected_chunk_ids`、`expected_sources`、`ground_truth_answer`、`ground_truth_citations`、`labels`、`evaluation_modes`、`dataset_version`、`config_snapshot`；运行后补充 `retrieved_chunks`、`generated_answer`、`citations`、`trace_id`、`backend_results`。
+- 评估报告顶层最小字段固定为：`run_id`、`trace_id`、`collection`、`dataset_name`、`dataset_version`、`backend_set`、`baseline_scope`、`config_snapshot`、`started_at`、`finished_at`、`aggregate_metrics`、`quality_gate_status`、`samples`、`failed_samples`、`artifacts`。
+- 字段继承规则固定如下：
+  - `collection`、`dataset_version`、`config_snapshot` 默认允许从 dataset manifest 顶层继承；样本级显式值优先级更高。
+  - `filters` 默认允许缺省为 `{}`；若 manifest 顶层声明了默认过滤条件，则样本级在其基础上覆盖。
+  - `evaluation_modes` 固定用于声明样本参与的评估维度，允许值仅为 `retrieval`、`answer`；至少包含一个值。
+  - `ground_truth_answer`、`ground_truth_citations` 仅在 `evaluation_modes` 包含 `answer` 时为必填；纯检索样本不得因缺少答案真值而判定为非法。
+- 验收标准：Query / MCP / Dashboard / Report 之间对 `sample_id`、引用、配置快照、`trace_id`、`run_id` 和 `dataset_version` 的口径一致；报告和样本结构均可直接 `json.dumps()`；阻塞评估闭环的 A-G 遗留项在本任务内补齐并同步测试。
+- 测试方法：`pytest tests/integration/test_query_engine.py tests/integration/test_mcp_server_query.py tests/integration/test_trace_write_and_read.py tests/unit/core/models/test_evaluation_models.py`
 
-##### H2 建立 golden test set、坏 case 集与数据集加载器
+##### H2 建立 golden/badcase 数据集、manifest 规范与加载器
 
 - 目标：建立标准化评估数据资产，使评估既能覆盖正常样本，也能覆盖已知坏 case、图片相关样本和过滤查询样本。
-- 修改文件：`data/evaluation/datasets/*`、`src/ragms/core/evaluation/dataset_loader.py`、`src/ragms/core/models/evaluation.py`
-- 实现类/函数：`DatasetLoader.load()`、`DatasetLoader.validate_manifest()`、`DatasetLoader.list_dataset_versions()`
-- 验收标准：golden test set、回归坏 case 集和样本 manifest 可被统一读取；样本结构可映射为标准评估输入；支持数据集版本号、collection 绑定关系、ground truth 来源和样本标签管理。
+- 修改文件：`data/evaluation/datasets/*`、`src/ragms/core/evaluation/dataset_loader.py`、`src/ragms/core/models/evaluation.py`、`tests/fixtures/evaluation/*`
+- 实现类/函数：`DatasetLoader.load()`、`DatasetLoader.validate_manifest()`、`DatasetLoader.list_dataset_versions()`、`DatasetLoader.resolve_sample_source()`
+- 样本 manifest 最小 schema 固定为：
+  ```json
+  {
+    "dataset_name": "golden_core",
+    "dataset_version": "v1",
+    "collection": "real_c_ingestion_test",
+    "config_snapshot": {"top_k": 5},
+    "default_filters": {},
+    "samples": [
+      {
+        "sample_id": "golden_001",
+        "query": "如何配置 Azure OpenAI？",
+        "evaluation_modes": ["retrieval", "answer"],
+        "expected_chunk_ids": ["chunk_abc_001"],
+        "expected_sources": ["config_guide.pdf"],
+        "ground_truth_answer": "使用 settings.yaml 配置 endpoint、api_key 与 deployment。",
+        "ground_truth_citations": ["config_guide.pdf#p3"],
+        "labels": ["golden", "config"]
+      }
+    ]
+  }
+  ```
+- 实现约束：
+  - 至少提供三类数据集：`golden`、`badcase_regression`、`multimodal_or_filtering`。
+  - `dataset_version`、`collection`、`labels`、`ground_truth` 来源与样本文件来源必须可追溯。
+  - manifest 顶层允许声明 `collection`、`dataset_version`、`config_snapshot`、`default_filters` 作为默认值；样本级字段可覆盖，但不得与顶层语义冲突。
+  - `DatasetLoader.load()` 必须在加载后输出“补齐继承字段后的标准样本”，避免下游再各自补默认值。
+  - `DatasetLoader.validate_manifest()` 必须明确拦截缺失字段、重复 `sample_id`、空样本集和非法 `collection` 绑定。
+- 验收标准：三类数据集与 manifest 可统一读取；样本结构可映射为 H1 的标准评估输入；支持按 `dataset_name`、`dataset_version`、`labels` 列出和过滤样本。
 - 测试方法：`pytest tests/unit/core/evaluation/test_dataset_loader.py`
 
-##### H3 实现检索指标与自定义指标评估器
+##### H3 实现确定性指标与固定阈值回归测试
 
-- 目标：先补齐不依赖外部评估框架的确定性指标，作为回归门槛和质量闸门的基础。
-- 修改文件：`src/ragms/core/evaluation/metrics/retrieval_metrics.py`、`src/ragms/core/evaluation/metrics/answer_metrics.py`、`src/ragms/libs/providers/evaluators/custom_metrics_evaluator.py`
-- 实现类/函数：`compute_hit_rate_at_k()`、`compute_mrr()`、`compute_ndcg_at_k()`、`compute_citation_coverage()`、`CustomMetricsEvaluator.evaluate()`
-- 验收标准：至少可稳定输出 `hit_rate@k`、`MRR`、`NDCG@K`、citation 覆盖率和必要的答案结构指标；指标字典与 `BaseEvaluator` 契约一致，可被 CompositeEvaluator 和报告服务直接消费。
-- 测试方法：`pytest tests/unit/core/evaluation/test_retrieval_metrics.py tests/unit/core/evaluation/test_answer_metrics.py tests/unit/libs/test_custom_metrics_evaluator.py`
+- 目标：先补齐不依赖外部评估框架的确定性指标，并把“固定阈值召回回归”单独落成稳定测试，作为长期质量闸门。
+- 修改文件：`src/ragms/core/evaluation/metrics/retrieval_metrics.py`、`src/ragms/core/evaluation/metrics/answer_metrics.py`、`src/ragms/libs/providers/evaluators/custom_metrics_evaluator.py`、`tests/e2e/test_recall_regression.py`
+- 实现类/函数：`compute_hit_rate_at_k()`、`compute_mrr()`、`compute_ndcg_at_k()`、`compute_citation_coverage()`、`compute_answer_structure_score()`、`CustomMetricsEvaluator.evaluate()`、`assert_recall_thresholds()`
+- 实现约束：
+  - `CustomMetricsEvaluator` 输出结构必须与 `BaseEvaluator` 契约一致，并按 backend 名写入 `backend_results.custom_metrics`。
+  - `tests/e2e/test_recall_regression.py` 必须基于固定 `golden` 数据集与固定阈值运行，不得依赖人工判断。
+  - 固定阈值至少覆盖 `hit_rate@k`、`MRR` 和 `citation_coverage`；阈值在测试内或固定配置中显式声明，不允许隐式从环境变量漂移。
+- 验收标准：至少可稳定输出 `hit_rate@k`、`MRR`、`NDCG@k`、citation 覆盖率和必要的答案结构指标；固定阈值回归测试可在本地重复运行并给出明确失败原因。
+- 测试方法：`pytest tests/unit/core/evaluation/test_retrieval_metrics.py tests/unit/core/evaluation/test_answer_metrics.py tests/unit/libs/test_custom_metrics_evaluator.py tests/e2e/test_recall_regression.py`
 
-##### H4 实现 `RagasEvaluator` 与评估后端适配层
+##### H4 实现 `RagasEvaluator`、`DeepEvalEvaluator` 与后端适配层
 
-- 目标：对接 ragas，并补齐评估后端适配层，保证未来接入 DeepEval 或其他后端时不需要重写主流程。
+- 目标：对接 ragas 和 DeepEval，并补齐统一后端适配层，保证未来接入其他评估后端时不需要重写主流程。
 - 修改文件：`src/ragms/libs/providers/evaluators/ragas_evaluator.py`、`src/ragms/libs/providers/evaluators/deepeval_evaluator.py`、`src/ragms/libs/abstractions/base_evaluator.py`
-- 实现类/函数：`RagasEvaluator.evaluate()`、`DeepEvalEvaluator.evaluate()`、`normalize_backend_metrics()`
-- 验收标准：ragas 可对标准样本输出 `context_precision`、`answer_relevancy`、`faithfulness` 等标准化指标；可选后端通过同一接口被装配；后端缺失依赖或不可用时能明确降级而不破坏评估主链路。
+- 实现类/函数：`RagasEvaluator.evaluate()`、`DeepEvalEvaluator.evaluate()`、`normalize_backend_metrics()`、`serialize_backend_failure()`
+- 实现约束：
+  - 标准后端结果结构固定为 `{"status": "...", "metrics": {...}, "errors": [...], "raw_summary": {...}}`。
+  - 后端缺失依赖、网络不可用或样本不适配时，必须以 `status="skipped"` 或 `status="failed"` 收敛到结构化结果，不得直接拖垮整次评估运行。
+  - 当样本 `evaluation_modes` 不包含 `answer` 时，答案质量相关 evaluator 必须返回 `status="skipped"` 并附带 `skip_reason="answer_metrics_not_applicable"`，不得把该样本计入答案指标分母。
+  - `ragas` 与 `deepeval` 原始返回值必须规范化为 H1 中的统一指标字典，页面层和 MCP 层不得直接依赖原始第三方字段名。
+- 验收标准：ragas 可对标准样本输出 `context_precision`、`answer_relevancy`、`faithfulness` 等标准化指标；DeepEval 适配层具备同等接口形态；后端降级行为可预测且可测试。
 - 测试方法：`pytest tests/unit/libs/test_ragas_evaluator.py tests/unit/libs/test_deepeval_evaluator.py`
 
 ##### H5 实现 `CompositeEvaluator`、工厂装配与配置切换
@@ -3507,111 +3552,176 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 - 目标：将 `custom_metrics`、`ragas`、`deepeval` 等后端纳入统一组合执行框架，并允许通过配置切换实验组合。
 - 修改文件：`src/ragms/core/evaluation/runner.py`、`src/ragms/libs/factories/evaluator_factory.py`、`src/ragms/runtime/settings_models.py`、`settings.yaml`
 - 实现类/函数：`CompositeEvaluator.evaluate()`、`build_evaluator_stack()`、`resolve_evaluation_backends()`
-- 验收标准：可按配置组合多个 evaluator 并输出统一结果；不同后端的失败、跳过和部分成功会被结构化收敛；运行时配置快照可随评估结果一起持久化。
+- 实现约束：
+  - `CompositeEvaluator.evaluate()` 返回统一顶层结构：`aggregate_metrics`、`backend_results`、`sample_errors`。
+  - 工厂装配必须支持按配置启用或关闭单个 backend，并保留 backend 执行顺序。
+  - 运行时配置快照必须随每次运行落盘，便于 H7 baseline 对比和 H9 质量门槛回溯。
+- 验收标准：可按配置组合多个 evaluator 并输出统一结果；不同后端的失败、跳过和部分成功会被结构化收敛；配置切换后运行结果中的 `backend_set` 与实际执行一致。
 - 测试方法：`pytest tests/unit/core/evaluation/test_composite_evaluator.py tests/unit/runtime/test_settings_models.py`
 
-##### H6 实现 `EvalRunner`、Evaluation Trace、评估报告落盘与实验对比元数据
+##### H6 实现 `EvalRunner`、`EvaluationTrace` 与报告持久化
 
-- 目标：完成评估主编排、Evaluation Trace 打点、报告持久化、运行标识与实验对比元数据落盘，使每次评估都可被长期追踪、可观测和可回放。
+- 目标：完成评估主编排、`EvaluationTrace` 打点、报告持久化、运行标识与实验元数据落盘，使每次评估都可被长期追踪、可观测和可回放。
 - 修改文件：`src/ragms/core/evaluation/runner.py`、`src/ragms/core/evaluation/report_service.py`、`src/ragms/core/trace_collector/trace_manager.py`、`src/ragms/observability/metrics/evaluation_metrics.py`、`src/ragms/storage/sqlite/repositories/evaluations.py`、`src/ragms/storage/sqlite/schema.py`
-- 实现类/函数：`EvalRunner.run()`、`record_evaluation_trace()`、`aggregate_evaluation_metrics()`、`ReportService.write_report()`、`ReportService.compare_runs()`、`EvaluationRepository.save_run()`
-- 验收标准：每次评估运行都具备稳定 `run_id` 和 `trace_id`，并落盘 `collection`、`dataset_version`、`backend_set`、`config_snapshot`、指标摘要、样本级结果和失败样本明细；`TraceService` 可读取 `evaluation` 类型 trace；报告既可供 Dashboard 读取，也可供 MCP Tool 返回结果摘要。
+- 实现类/函数：`EvalRunner.run()`、`record_evaluation_trace()`、`aggregate_evaluation_metrics()`、`ReportService.write_report()`、`ReportService.list_runs()`、`ReportService.load_report_detail()`、`EvaluationRepository.save_run()`
+- 实现约束：
+  - `EvalRunner.run()` 必须显式串联 `dataset_load -> sample_build -> evaluator_execute -> metrics_aggregate -> report_persist` 五个规范阶段，并将阶段详情落到 `EvaluationTrace`。
+  - 每次运行都必须生成稳定 `run_id` 与 `trace_id`，并在报告、Trace 和 SQLite 记录之间双向关联。
+  - 报告落盘既要保留聚合指标，也要保留样本级结果、失败样本明细、artifact 路径和 `config_snapshot`。
+- 验收标准：每次评估运行都具备稳定 `run_id` 和 `trace_id`，并落盘 `collection`、`dataset_version`、`backend_set`、`config_snapshot`、指标摘要、样本级结果和失败样本明细；`TraceService` 可读取 `evaluation` 类型 trace；报告可直接供 Dashboard、CLI 和 MCP Tool 复用。
 - 测试方法：`pytest tests/integration/test_evaluation_runner.py tests/integration/test_evaluation_trace_logging.py`
 
-##### H7 打通 Dashboard 真实评估结果、趋势展示与 baseline 管理
+##### H7 实现 baseline 管理与稳定对比契约
 
-- 目标：将阶段 G 的评估面板从“页面壳 + 只读占位”升级为“真实报告消费端”，并建立 baseline 对比能力。
-- 修改文件：`src/ragms/observability/dashboard/pages/evaluation_panel.py`、`src/ragms/core/evaluation/report_service.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`
-- 实现类/函数：`load_latest_evaluation()`、`load_baseline_comparison()`、`ReportService.resolve_latest_run()`
-- 验收标准：评估面板可读取 H6 真实落盘的评估结果，展示趋势、provider 对比、case-by-case 失败样本、baseline 差异和配置快照；无报告时显示明确空态；存在多次运行时支持按 `run_id` 做对比。
-- 测试方法：`pytest tests/e2e/test_evaluation_visible_in_dashboard.py`
+- 目标：把 baseline 从“页面上临时比较一次”收敛成稳定服务契约，避免 Dashboard、MCP 和报告读取层各自发明 baseline 语义。
+- 修改文件：`src/ragms/core/evaluation/report_service.py`、`src/ragms/storage/sqlite/repositories/evaluations.py`、`src/ragms/core/models/evaluation.py`、`tests/unit/core/evaluation/test_report_service.py`
+- 实现类/函数：`ReportService.set_baseline()`、`ReportService.get_baseline()`、`ReportService.compare_runs()`、`ReportService.compare_against_baseline()`、`EvaluationRepository.save_baseline_binding()`
+- baseline 作用域固定为 `(collection, dataset_version, backend_set)`；只有作用域完全一致的运行结果才允许直接做 baseline 对比。
+- 对比结果结构固定至少包含：`current_run`、`baseline_run`、`metric_deltas`、`sample_deltas`、`quality_gate_delta`、`config_diff_summary`。
+- 实现约束：
+  - baseline 的写入、切换、清除必须通过 `ReportService` 收敛，不允许 Dashboard 或 MCP 直接写数据库。
+  - `compare_runs()` 用于任意两个 `run_id` 的显式对比；`compare_against_baseline()` 用于“当前 run vs 当前作用域 baseline”的快捷对比。
+- 验收标准：baseline 设置、读取、切换和清除语义明确；Dashboard、CLI 和 MCP 读取到的 baseline 差异结果结构一致；作用域不一致时返回可读错误而不是静默比较。
+- 测试方法：`pytest tests/unit/core/evaluation/test_report_service.py tests/integration/test_evaluation_runner.py`
 
-##### H8 接入 `evaluate_collection` MCP Tool
+##### H8 打通 Dashboard 评估工作台与真实运行入口
 
-- 目标：在数据集、评估器、Runner 和报告服务稳定后，对外暴露可远程触发的评估工具，并保证协议契约清晰稳定。
+- 目标：将阶段 G 的评估面板从“只读展示壳”升级为“可运行、可查看、可对比、可设 baseline”的真实工作台。
+- 修改文件：`src/ragms/observability/dashboard/pages/evaluation_panel.py`、`src/ragms/observability/dashboard/context.py`、`src/ragms/core/evaluation/report_service.py`、`tests/integration/test_dashboard_evaluation_panel.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`
+- 实现类/函数：`render_evaluation_panel()`、`render_evaluation_run_form()`、`start_dashboard_evaluation()`、`render_evaluation_results()`、`render_baseline_actions()`
+- 实现约束：
+  - H 阶段允许在不破坏 G2 既有字段的前提下扩展 Dashboard Context，新增 `eval_runner` 或等价评估编排入口；写路径由该入口统一收敛，读路径仍通过 `ReportService`。
+  - 页面必须支持选择 `collection`、`dataset_name`、`dataset_version`、`backend_set` 和基础 `eval_options`，并在 Dashboard 内直接触发真实评估运行。
+  - 页面层不得自行构造运行时对象或直接操作 SQLite，必须通过 Dashboard Context 注入的 `eval_runner` / `ReportService` 访问评估能力；不得绕过服务层直接写报告或 baseline 绑定。
+  - 至少覆盖四种页面状态：无报告空态、运行中状态、运行成功结果态、运行失败可排障态。
+  - 页面必须支持查看样本级失败明细、跳转到关联 `trace_id`、按 `run_id` 比较，以及将当前运行设为 baseline。
+- 验收标准：用户可在 Dashboard 中直接启动评估并看到真实结果；评估面板可读取 H6 落盘报告，展示趋势、provider 对比、case-by-case 失败样本、baseline 差异和配置快照；无报告时显示明确空态。
+- 测试方法：`pytest tests/integration/test_dashboard_evaluation_panel.py tests/e2e/test_evaluation_visible_in_dashboard.py`
+
+##### H9 接入 `evaluate_collection` MCP Tool
+
+- 目标：在数据集、评估器、Runner、baseline 与报告服务稳定后，对外暴露可远程触发的评估工具，并保证协议契约清晰稳定。
 - 修改文件：`src/ragms/mcp_server/tools/evaluation.py`、`src/ragms/mcp_server/schemas.py`、`src/ragms/mcp_server/tool_registry.py`、`src/ragms/core/evaluation/runner.py`、`src/ragms/core/evaluation/report_service.py`、`tests/unit/mcp_server/tools/test_evaluation_tool.py`、`tests/integration/test_mcp_server_evaluation.py`
 - 实现类/函数：`handle_evaluate_collection()`、`normalize_evaluation_request()`、`serialize_evaluation_result()`
-- 验收标准：工具可接收 `collection`、`dataset`、`metrics`、`eval_options` 等参数；可触发真实评估并返回 `run_id`、指标摘要、样本统计、结果路径与失败信息；评估失败不会拖垮 MCP Server 主进程；输出结构适合 Agent 做 A/B 比较与回归分析。
+- MCP 输出最小字段固定为：`run_id`、`trace_id`、`collection`、`dataset_name`、`dataset_version`、`backend_set`、`aggregate_metrics`、`quality_gate_status`、`baseline_delta`、`failed_samples_count`、`result_path`、`errors`。
+- 实现约束：
+  - 工具必须接收 `collection`、`dataset`、`metrics`、`eval_options`、`baseline_mode` 等参数，并将其规范化后传入 `EvalRunner`。
+  - 当前阶段默认采用同步执行语义；若评估失败，必须返回结构化失败结果，不能拖垮 MCP Server 主进程。
+  - 输出结构必须适合 Agent 做 A/B 比较与回归分析，不允许只返回自然语言文本。
+- 验收标准：MCP Client 可触发真实评估并拿到稳定 `run_id`、指标摘要、baseline 差异和失败信息；非法参数、缺失数据集和后端异常都有统一错误语义。
 - 测试方法：`pytest tests/unit/mcp_server/tools/test_evaluation_tool.py tests/integration/test_mcp_server_evaluation.py`
 
-##### H9 基于评估结果完成质量门槛达标与前序阶段收口
+##### H10 基于评估结果完成质量门槛与前序阶段收口
 
-- 目标：以 H1-H8 产出的评估报告为依据，对阶段 A-G 中仍未达标或未收口的部分做最后一轮补齐和调优，直到系统满足第 4.3 节定义的质量门槛后，才允许结束阶段 H。
+- 目标：以 H1-H9 产出的评估报告、baseline 对比和固定阈值回归结果为依据，对阶段 A-G 中仍未达标或未收口的部分做最后一轮补齐和调优，直到系统满足第 4.3 节定义的质量门槛后，才允许结束阶段 H。
 - 修改文件：`src/ragms/core/query_engine/*`、`src/ragms/ingestion_pipeline/*`、`src/ragms/mcp_server/*`、`src/ragms/observability/dashboard/*`、`settings.yaml`、`DEV_SPEC.md`
 - 实现类/函数：`ReportService.assert_quality_gate()`、`collect_open_stage_gaps()`、`apply_regression_fixes()`
-- 验收标准：默认配置在 golden test set 上至少满足 `Hit Rate@K >= 90%`、`MRR >= 0.8`、`NDCG@K >= 0.85`、`Faithfulness >= 0.9`、`Answer Relevancy >= 0.85`；若任一指标不达标，则必须在本任务内回补对应的摄取、检索、重排、引用、Trace、Dashboard 或 MCP 问题，直至指标达标；阶段 H 完成时，A-G 不再存在阻塞 I 阶段的未完成项。
-- 测试方法：`pytest tests/integration/test_query_engine.py tests/integration/test_evaluation_runner.py tests/integration/test_mcp_server_evaluation.py tests/e2e/test_evaluation_visible_in_dashboard.py`
+- 质量门槛固定为：`Hit Rate@K >= 0.90`、`MRR >= 0.80`、`NDCG@K >= 0.85`、`Faithfulness >= 0.90`、`Answer Relevancy >= 0.85`；固定阈值召回回归测试必须同步通过。
+- 指标分母规则固定如下：
+  - 检索指标基于所有 `evaluation_modes` 包含 `retrieval` 的样本计算。
+  - 生成质量指标仅基于 `evaluation_modes` 包含 `answer` 且具备完整答案真值的样本计算。
+  - 因样本不适用而 `skipped` 的答案指标结果不得被记为失败，也不得被悄悄并入分母。
+- 验收标准：若任一指标或回归测试不达标，必须在本任务内回补对应的摄取、检索、重排、引用、Trace、Dashboard 或 MCP 问题，直至达标；阶段 H 完成时，A-G 不再存在阻塞阶段 I 的未完成项。
+- 测试方法：`pytest tests/integration/test_query_engine.py tests/integration/test_evaluation_runner.py tests/integration/test_mcp_server_evaluation.py tests/e2e/test_evaluation_visible_in_dashboard.py tests/e2e/test_recall_regression.py`
 
 阶段 H 完成判定：
 
 - 可以基于指定 `collection` 和 `dataset_version` 执行真实评估，并生成稳定 `run_id` 的结构化报告。
-- `custom_metrics`、`ragas` 以及配置中启用的其他 evaluator 可通过统一接口运行并输出标准化指标。
-- Dashboard 评估面板可读取真实评估结果、展示趋势与 baseline 对比，并能回看配置快照与坏 case 明细。
+- `custom_metrics`、`ragas`、`deepeval` 以及配置中启用的其他 evaluator 可通过统一接口运行并输出标准化指标。
+- Dashboard 评估面板既可直接启动真实评估，也可读取真实评估结果、展示趋势与 baseline 对比，并回看配置快照与坏 case 明细。
+- baseline 管理有稳定作用域 `(collection, dataset_version, backend_set)` 与统一对比结果结构，不依赖页面层临时拼装。
 - `TraceService` 可读取 `evaluation` 类型 trace，系统总览与评估面板可消费评估指标聚合结果。
-- `evaluate_collection` MCP Tool 可稳定触发评估并返回适合 Agent 消费的摘要结果。
-- 第 4.3 节定义的关键质量门槛全部满足；任何由评估暴露出的 A-G 遗留问题都已在 H 阶段内补齐。
-- `pytest tests/unit/core/evaluation tests/unit/libs/test_ragas_evaluator.py tests/unit/libs/test_deepeval_evaluator.py tests/unit/libs/test_custom_metrics_evaluator.py tests/integration/test_evaluation_runner.py tests/integration/test_evaluation_trace_logging.py tests/integration/test_mcp_server_evaluation.py tests/e2e/test_evaluation_visible_in_dashboard.py` 全部通过。
+- `evaluate_collection` MCP Tool 可稳定触发评估并返回适合 Agent 消费的结构化摘要结果。
+- 第 4.3 节定义的关键质量门槛和固定阈值回归测试全部满足；任何由评估暴露出的 A-G 遗留问题都已在 H 阶段内补齐。
+- `pytest tests/unit/core/evaluation tests/unit/libs/test_ragas_evaluator.py tests/unit/libs/test_deepeval_evaluator.py tests/unit/libs/test_custom_metrics_evaluator.py tests/unit/core/evaluation/test_report_service.py tests/integration/test_evaluation_runner.py tests/integration/test_evaluation_trace_logging.py tests/integration/test_mcp_server_evaluation.py tests/integration/test_dashboard_evaluation_panel.py tests/e2e/test_evaluation_visible_in_dashboard.py tests/e2e/test_recall_regression.py` 全部通过。
 
 #### 阶段 I：端到端验收与文档收口
 
-目标：在阶段 H 已经完成质量闭环与前序阶段收口的前提下，完成最终端到端回归、交付文档补齐、一键验收编排和版本冻结，使项目达到“可安装、可运行、可验收、可交付”的既定目标。阶段 I 不再新增核心业务能力，而是要把已经实现的摄取、检索、MCP、Trace、Dashboard、Evaluation 串成正式交付路径；阶段 I 完成后，新成员应可按照 README 和文档在本地完成安装、摄取、查询、评估、Dashboard 查看和一键验收，项目也具备可发布的版本与交付说明。
+目标：在阶段 H 已经完成质量闭环与前序阶段收口的前提下，完成最终端到端回归、关键契约测试补齐、交付文档完善、一键验收编排和版本冻结，使项目达到“可安装、可运行、可验收、可交付”的既定目标。阶段 I 不再新增核心业务能力，而是把已经实现的摄取、检索、MCP、Trace、Dashboard、Evaluation 串成正式交付路径；阶段 I 完成后，新成员应可按照 README 和文档在本地完成安装、摄取、查询、评估、Dashboard 查看和一键验收，项目也具备可发布的版本与交付说明。
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| I1 | 实现 MCP Client 全工具最终 E2E 回归 | [ ] |  |  |
+| I1 | 实现 MCP 协议级全工具最终 E2E 回归 | [ ] |  |  |
 | I2 | 实现 Dashboard 最终回归 E2E | [ ] |  |  |
 | I3 | 完成一键全链路验收脚本与摘要输出 | [ ] |  |  |
-| I4 | 完善 README、API、Dashboard 与架构文档 | [ ] |  |  |
-| I5 | 完成最终验收、交付清单与版本收口 | [ ] |  |  |
+| I4 | 完善 README、MCP 配置、Dashboard 与架构文档 | [ ] |  |  |
+| I5 | 补齐关键抽象契约测试与最终回归基线 | [ ] |  |  |
+| I6 | 完成最终验收、交付清单与版本收口 | [ ] |  |  |
 
-##### I1 实现 MCP Client 全工具最终 E2E 回归
+##### I1 实现 MCP 协议级全工具最终 E2E 回归
 
-- 目标：从最终用户视角模拟真实 MCP Client，对阶段 E/F/H 已交付的全部关键工具做正式端到端回归，而不再只覆盖部分调用。
+- 目标：从最终用户视角模拟真实 MCP Client，不仅覆盖工具调用本身，还要覆盖协议级握手顺序和错误语义。
 - 修改文件：`tests/e2e/test_mcp_client_simulation.py`
-- 实现类/函数：`simulate_mcp_client_roundtrip()`
+- 实现类/函数：`run_mcp_protocol_session()`、`assert_mcp_tool_roundtrip()`
 - 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install pytest-cov`，补齐 I 阶段覆盖率统计与最终验收依赖。
-- 验收标准：可通过模拟客户端完成 `query_knowledge_hub`、`ingest_documents`、`list_collections`、`get_document_summary`、`get_trace_detail`、`evaluate_collection` 全链路调用；响应结构、错误语义、引用透明和关键标识（如 `trace_id`、`run_id`）均符合规范。
+- 协议级流程必须固定覆盖：`initialize -> notifications/initialized -> tools/list -> tools/call`；其中 `tools/call` 至少覆盖 `query_knowledge_hub`、`ingest_documents`、`list_collections`、`get_document_summary`、`get_trace_detail`、`evaluate_collection` 六个工具。
+- 验收标准：以子进程方式启动 MCP Server 后，可完成协议级握手、工具枚举、成功调用路径和至少一条非法参数错误路径；响应结构、错误语义、引用透明和关键标识（如 `trace_id`、`run_id`）均符合规范。
 - 测试方法：`pytest tests/e2e/test_mcp_client_simulation.py`
 
 ##### I2 实现 Dashboard 最终回归 E2E
 
 - 目标：对最终 Dashboard 做交付前回归，验证页面加载、关键跳转、真实数据展示和核心交互在最终配置下稳定可用。
-- 修改文件：`tests/e2e/test_dashboard_smoke.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`
-- 实现类/函数：`dashboard_smoke_check()`、`assert_dashboard_regression_flow()`
-- 验收标准：系统总览、数据浏览、Ingestion 管理、Ingestion 追踪、Query 追踪、评估面板六页均可正常打开；关键导航、真实评估结果展示、文档/Trace/评估报告跳转和必要的空态渲染均通过最终回归。
-- 测试方法：`pytest tests/e2e/test_dashboard_smoke.py tests/e2e/test_evaluation_visible_in_dashboard.py`
+- 修改文件：`tests/e2e/test_dashboard_smoke.py`、`tests/e2e/test_dashboard_navigation_regression.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`
+- 实现类/函数：`dashboard_smoke_check()`、`assert_dashboard_navigation_regression()`、`assert_dashboard_regression_flow()`
+- 验收标准：系统总览、数据浏览、Ingestion 管理、Ingestion 追踪、Query 追踪、评估面板六页均可正常打开；关键导航、真实评估结果展示、文档/Trace/评估报告跳转、评估触发入口和必要空态渲染均通过最终回归。
+- 测试方法：`pytest tests/e2e/test_dashboard_smoke.py tests/e2e/test_dashboard_navigation_regression.py tests/e2e/test_evaluation_visible_in_dashboard.py`
 
 ##### I3 完成一键全链路验收脚本与摘要输出
 
 - 目标：形成正式的“安装后可直接执行”的全链路验收入口，把摄取、查询、MCP、Trace、Dashboard、Evaluation 串成一条可重复运行的验收脚本，并显式映射第 4.2.3 节定义的三个核心 E2E 场景。
 - 修改文件：`scripts/run_acceptance.py`、`tests/e2e/test_full_chain_acceptance.py`
 - 实现类/函数：`run_full_acceptance()`、`render_acceptance_summary()`
-- 验收标准：一条命令可执行“摄取 -> 查询 -> MCP 调用 -> Trace 校验 -> Dashboard 校验 -> Evaluation 校验”的完整路径，并输出结构化摘要、失败项和建议排查入口；验收摘要必须显式覆盖第 4.2.3 节的场景 1（数据准备）、场景 2（召回/质量评估）、场景 3（MCP Client 功能测试）。
+- 实现约束：
+  - 一条命令必须串联“摄取 -> 查询 -> MCP 调用 -> Trace 校验 -> Dashboard 校验 -> Evaluation 校验”。
+  - 验收摘要必须输出结构化结果，而不是只打印自然语言；至少包含 `status`、`failed_steps`、`artifact_paths`、`trace_ids`、`run_ids`。
+  - 验收摘要必须显式覆盖第 4.2.3 节的场景 1（数据准备）、场景 2（召回/质量评估）、场景 3（MCP Client 功能测试）。
+- 验收标准：一键验收脚本在默认本地环境下可重复执行，并输出结构化摘要、失败项和建议排查入口。
 - 测试方法：`pytest tests/e2e/test_full_chain_acceptance.py`
 
-##### I4 完善 README、API、Dashboard 与架构文档
+##### I4 完善 README、MCP 配置、Dashboard 与架构文档
 
 - 目标：把项目使用说明从“开发者知道怎么跑”提升到“新成员按文档即可完成完整流程”。
 - 修改文件：`README.md`、`DEV_SPEC.md`、`docs/architecture/*`、`docs/api/*`、`docs/dashboards/*`
 - 实现类/函数：文档补充为主，无新增核心函数
-- 验收标准：文档完整覆盖安装、配置、摄取、查询、MCP tools、Trace 查看、Dashboard 使用、评估执行、一键验收和常见问题排查；第 5 章目录树与实际交付文件一致，文档中的命令、路径和页面名称与实现一致。
+- 文档必须明确覆盖：
+  - 安装、配置、摄取、查询、MCP tools、Trace 查看、Dashboard 使用、评估执行、一键验收和常见问题排查。
+  - GitHub Copilot `mcp.json` 与 Claude Desktop `claude_desktop_config.json` 的可直接改值使用的配置示例。
+  - `.venv` 下的真实测试命令、评估命令、Dashboard 启动命令和一键验收命令。
+  - 当前支持能力、限制说明和常见失败场景排查入口。
+- 验收标准：第 5 章目录树与实际交付文件一致；文档中的命令、路径、工具名和页面名与实现一致；新成员仅按文档即可走通完整流程。
 - 测试方法：人工走查 + README / 文档流程冒烟验证
 
-##### I5 完成最终验收、交付清单与版本收口
+##### I5 补齐关键抽象契约测试与最终回归基线
+
+- 目标：在交付前把关键抽象的契约测试显式补齐，避免最终版本只依赖 E2E 通过而丢失基础接口一致性保证。
+- 修改文件：`tests/unit/test_vector_store_contract.py`、`tests/unit/test_reranker_contract.py`、`tests/unit/core/evaluation/test_evaluator_contract.py`、`tests/unit/core/management/test_document_admin_service_contract.py`
+- 实现类/函数：测试补充为主，无新增核心业务函数
+- 契约测试至少覆盖：
+  - `BaseVectorStore` 及其实现的查询、写入、删除、metadata 过滤与错误语义。
+  - `Reranker` 的启用、关闭、fallback 和结果结构。
+  - `BaseEvaluator` / `CompositeEvaluator` 的输入输出形状与 backend 失败收敛。
+  - `DocumentAdminService` 的摄取触发、删除、重建与错误收敛语义。
+- 验收标准：关键抽象在不同实现和配置下都满足统一输入输出契约；`pytest -q` 下 contract tests 全绿，且不会依赖真实网络。
+- 测试方法：`pytest tests/unit/test_vector_store_contract.py tests/unit/test_reranker_contract.py tests/unit/core/evaluation/test_evaluator_contract.py tests/unit/core/management/test_document_admin_service_contract.py`
+
+##### I6 完成最终验收、交付清单与版本收口
 
 - 目标：在所有功能、测试和文档完成后，形成正式交付物并冻结发布版本。
 - 修改文件：`README.md`、`DEV_SPEC.md`、`pyproject.toml`、`scripts/run_acceptance.py`
 - 实现类/函数：`render_acceptance_summary()`、`build_release_checklist()`
-- 验收标准：所有核心测试通过；一键验收脚本输出通过摘要；交付清单包含版本号、关键命令、支持能力、限制说明和验收结果；文档、目录结构、测试与实现保持一致；覆盖率报告与第 4.4 节保持一致，其中单元测试核心逻辑覆盖率应达到 `>= 80%`、关键集成路径覆盖率达到 `100%`、第 4.2.3 节定义的三个核心 E2E 场景覆盖率达到 `100%`，项目方可进入发布或归档阶段。
+- 验收标准：所有核心测试通过；一键验收脚本输出通过摘要；交付清单包含版本号、关键命令、支持能力、限制说明、覆盖率结果和验收结论；交付清单还必须冻结正式 baseline 的 `run_id`、`collection`、`dataset_version`、`backend_set` 与生成日期，作为后续回归对比基线；文档、目录结构、测试与实现保持一致；覆盖率报告与第 4.4 节保持一致，其中单元测试核心逻辑覆盖率应达到 `>= 80%`、关键集成路径覆盖率达到 `100%`、第 4.2.3 节定义的三个核心 E2E 场景覆盖率达到 `100%`，项目方可进入发布或归档阶段。
 - 测试方法：`pytest --cov=src/ragms --cov-report=term-missing tests/unit tests/integration tests/e2e`
 
 阶段 I 完成判定：
 
 - 新成员仅依赖 `README.md` 与 `docs/` 下文档，即可在本地完成安装、摄取、查询、MCP 调用、Trace 查看、Dashboard 使用、评估执行和一键验收。
-- `tests/e2e/test_mcp_client_simulation.py`、`tests/e2e/test_dashboard_smoke.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`、`tests/e2e/test_full_chain_acceptance.py` 全部通过。
-- `scripts/run_acceptance.py` 可输出结构化验收摘要，作为最终交付检查入口。
+- `tests/e2e/test_mcp_client_simulation.py`、`tests/e2e/test_dashboard_smoke.py`、`tests/e2e/test_dashboard_navigation_regression.py`、`tests/e2e/test_evaluation_visible_in_dashboard.py`、`tests/e2e/test_full_chain_acceptance.py` 全部通过。
+- 协议级 MCP E2E 已覆盖 `initialize -> notifications/initialized -> tools/list -> tools/call` 和关键错误路径，而不是只验证工具 helper。
+- 一键验收脚本可输出结构化验收摘要，作为最终交付检查入口。
 - 第 4.2.3 节定义的三个核心 E2E 场景在验收摘要中都有明确映射；第 4.4 节覆盖率目标已形成可检查报告。
-- `README.md`、`DEV_SPEC.md`、`docs/architecture/*`、`docs/api/*`、`docs/dashboards/*` 与第 5 章文件结构保持一致。
+- `BaseVectorStore`、`Reranker`、`BaseEvaluator`、`DocumentAdminService` 等关键抽象的 contract tests 已补齐并通过。
+- `README.md`、`DEV_SPEC.md`、`docs/architecture/*`、`docs/api/*`、`docs/dashboards/*` 与第 5 章文件结构保持一致，并包含 GitHub Copilot / Claude Desktop 的 MCP 配置示例。
+- 正式交付清单中已冻结一条可追溯 baseline，包含 `run_id`、`collection`、`dataset_version`、`backend_set` 和生成时间，后续版本可据此做稳定回归对比。
 - 版本号、交付清单和验收结论全部收口，项目达到可交付状态。
 
 ### 6.4 执行建议
