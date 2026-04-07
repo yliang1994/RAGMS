@@ -883,102 +883,119 @@ evaluation:
 
 系统定义三类 Trace 记录，分别覆盖查询、摄取与评估三条主链路：
 
-- `QueryTrace`：记录一次查询从 Query Rewrite、Hybrid Retrieval、Rerank、Prompt Assemble 到 Answer Generation 的完整过程。
-- `IngestionTrace`：记录一次摄取从文件发现、Loader、Splitter、Transform、Embedding、Upsert 到状态提交的完整过程。
-- `EvaluationTrace`：记录一次评估从数据集加载、样本装配、Evaluator 执行、指标聚合到报告落盘的完整过程。
+- `QueryTrace`：记录一次查询从 Query 预处理、Hybrid Retrieval、Rerank、结构化响应构建到 Answer Generation 的完整过程。
+- `IngestionTrace`：记录一次摄取从文件完整性检查、加载、切分、增强、编码、存储到生命周期收尾的完整过程。
+- `EvaluationTrace`：记录一次评估从数据集加载、样本构建、Evaluator 执行、指标聚合到报告落盘的完整过程。
 
-三类 Trace 都必须共享统一的顶层结构，以便 Dashboard 统一读取和过滤。Trace 的持久化粒度为“单次请求一条完整记录”，阶段详情以内嵌 `stages` 列表方式保存，而不是将每个阶段拆成独立日志行。
+三类 Trace 必须共享统一的顶层结构，以便 Dashboard、`TraceService` 与 MCP Tool 统一读取和过滤。Trace 的持久化粒度固定为“单次请求一条完整记录”，阶段详情以内嵌 `stages` 列表方式保存，而不是将每个阶段拆成独立日志行。
+
+**统一顶层字段契约**
+
+所有 Trace 的 `to_dict()` 输出都必须可直接 `json.dumps()`，并至少包含以下稳定字段：
+
+- `trace_id`：请求唯一标识，跨日志、回调、MCP 响应和 Dashboard 保持一致。
+- `trace_type`：固定枚举 `query` / `ingestion` / `evaluation`。
+- `status`：固定枚举 `running` / `succeeded` / `failed` / `partial_success` / `skipped`。
+- `started_at` / `finished_at` / `duration_ms`：请求开始时间、结束时间与端到端耗时。
+- `collection`：本次请求关联的 collection；无 collection 时允许为 `null`，但字段不可缺失。
+- `metadata`：顶层补充信息，允许写入 provider 组合、配置摘要、运行模式等非核心字段。
+- `error`：结构化异常信息；成功路径为 `null`。
+- `stages`：按执行顺序排列的 `StageTrace` 列表；未执行阶段不生成空占位项。
+
+`StageTrace` 必须共享如下稳定字段：
+
+- `stage_name`：阶段名，单个 trace 内必须唯一。
+- `status`：阶段状态，复用 Trace 的状态枚举。
+- `started_at` / `finished_at` / `elapsed_ms`：阶段起止时间与耗时。
+- `input_summary` / `output_summary`：输入输出摘要，禁止直接写入超大原文或完整向量数组。
+- `metadata`：阶段附加指标，至少允许承载 `method`、`provider`、`retry_count`、`fallback_applied`、`fallback_reason`、计数类指标等信息。
+- `error`：阶段异常信息；成功路径为 `null`。
+
+其中 `metadata` 与摘要字段的职责必须分离：
+
+- 摘要字段负责快速阅读与 Dashboard 展示。
+- `metadata` 负责承载结构化明细和指标。
+- 任意字段都不得泄露密钥、认证头、完整敏感提示词或不可控大对象。
 
 **A. Query Trace（查询追踪）**
 
-每次查询请求生成唯一的 `trace_id`，记录从 Query 输入到 Response 输出的全过程：
+每次查询请求生成唯一的 `trace_id`，记录从 Query 输入到 Response 输出的全过程。`QueryTrace` 在统一顶层字段之外，至少额外包含：
 
-**基础信息**：
-- `trace_id`：请求唯一标识
-- `trace_type`：`"query"`
-- `start_time` / `end_time` / `duration_ms`：请求开始时间、结束时间与总耗时
-- `user_query`：用户原始查询
-- `collection`：检索的知识库集合
-- `status`：本次请求状态
+- `query`：用户原始查询。
+- `top_k_results`：最终返回的 Top-K 文档或 chunk 标识列表。
+- `evaluation_metrics`：可选评估指标摘要，如 `context_relevance`、`answer_faithfulness`。
 
-**各阶段详情 (Stages)**：
+Query 链路的规范阶段名固定如下：
 
-| 阶段 | 记录内容 |
+| 阶段名 | 记录内容 |
 |-----|---------|
-| **Query Processing** | 原始 Query、改写后 Query（若有）、提取的关键词、method、耗时 |
-| **Dense Retrieval** | 返回的 Top-N 候选及相似度分数、provider、耗时 |
-| **Sparse Retrieval** | 返回的 Top-N 候选及 BM25 分数、method、耗时 |
-| **Fusion** | 融合后的统一排名、algorithm、耗时 |
-| **Rerank** | 重排后的最终排名及分数、backend、是否触发 Fallback、耗时 |
-| **Generation（可选）** | Prompt 摘要、LLM provider、模型名称、首 token 耗时、答案摘要、总耗时 |
+| `query_processing` | 原始 Query、归一化或改写结果、提取关键词、metadata filters、`method` |
+| `dense_retrieval` | 稠密召回 Top-K、分数摘要、`provider`、召回数量 |
+| `sparse_retrieval` | 稀疏召回 Top-K、BM25 分数摘要、`method`、召回数量 |
+| `fusion` | 融合算法、输入候选数、输出候选数、融合后排名摘要 |
+| `rerank` | 重排 backend、最终排序摘要、`fallback_applied`、`fallback_reason` |
+| `response_build` | 引用数量、图片数量、结构化响应摘要 |
+| `answer_generation` | Prompt 摘要、LLM provider、模型名称、首 token 耗时、答案摘要 |
 
-**汇总指标**：
-- `duration_ms`：端到端总耗时
-- `top_k_results`：最终返回的 Top-K 文档 ID
-- `error`：异常信息（若有）
+补充约束：
 
-**评估指标 (Evaluation Metrics)**：
-- `context_relevance`：召回文档与 Query 的相关性分数
-- `answer_faithfulness`：生成答案与召回文档的一致性分数（若有生成环节）
+- `answer_generation` 仅在启用生成式回答时出现；纯检索场景不得强制写空阶段。
+- `response_build` 与 `answer_generation` 必须分开记录，避免引用构建和 LLM 耗时混在同一阶段。
+- `dense_retrieval`、`sparse_retrieval`、`fusion`、`rerank` 阶段必须至少记录召回数量和排序摘要，不能只写“阶段成功”。
 
 **B. Ingestion Trace（摄取追踪）**
 
-每次文档摄取生成唯一的 `trace_id`，记录从文件加载到存储完成的全过程：
+每次文档摄取生成唯一的 `trace_id`，记录从文件检查到状态提交的全过程。`IngestionTrace` 在统一顶层字段之外，至少额外包含：
 
-**基础信息**：
-- `trace_id`：摄取唯一标识
-- `trace_type`：`"ingestion"`
-- `start_time` / `end_time` / `duration_ms`：摄取开始时间、结束时间与总耗时
-- `source_path`：源文件路径
-- `collection`：目标集合名称
-- `status`：本次摄取状态
+- `source_path`：源文件路径。
+- `document_id`：文档标识；开始阶段未知时可先为空，结束前必须补齐或明确为 `null`。
+- `total_chunks`：最终产出的 chunk 数量。
+- `total_images`：处理的图片数量。
+- `skipped`：是否或为何被跳过，例如“内容未变更”。
 
-**各阶段详情 (Stages)**：
+Ingestion 链路的规范阶段名固定如下，并与第 3.1 节和 C1 的 Pipeline 固定顺序保持一致：
 
-| 阶段 | 记录内容 |
+| 阶段名 | 记录内容 |
 |-----|---------|
-| **Load** | 文件大小、解析器（method: markitdown）、提取的图片数、耗时 |
-| **Split** | splitter 类型（method）、产出 chunk 数、平均 chunk 长度、耗时 |
-| **Transform** | 各 transform 名称与处理详情（refined/enriched/captioned 数量）、LLM provider、耗时 |
-| **Embed** | embedding provider、batch 数、向量维度、dense + sparse 编码耗时 |
-| **Upsert** | 存储后端（method: chroma）、upsert 数量、BM25 索引更新、图片存储、耗时 |
+| `file_integrity` | 文件指纹、是否命中增量跳过、`method`、跳过原因 |
+| `load` | 文件大小、解析器、提取图片数、文档摘要 |
+| `chunking` | splitter 类型、chunk 数、平均长度、图片锚点切分摘要 |
+| `transform` | 各 transform 步骤摘要、增强数量、LLM/VLM provider、降级信息 |
+| `embedding` | embedding provider、batch 数、向量维度、dense/sparse 编码摘要 |
+| `storage` | 向量库后端、upsert 数、BM25 更新结果、图片持久化摘要 |
+| `lifecycle_finalize` | 文档状态提交、版本更新、失败/跳过原因归档 |
 
-**汇总指标**：
-- `duration_ms`：端到端总耗时
-- `total_chunks`：最终存储的 chunk 数量
-- `total_images`：处理的图片数量
-- `skipped`：跳过的文件/chunk 数（已存在、未变更等）
-- `error`：异常信息（若有）
+补充约束：
+
+- `file_integrity`、`storage`、`lifecycle_finalize` 不能被合并成单个“杂项阶段”，否则无法解释跳过、回滚和状态提交的边界。
+- `embedding` 阶段允许内部同时处理 dense/sparse 两路编码，但对外必须表现为一个稳定阶段；其内部细分耗时写入 `metadata`。
+- 对于被跳过的文档，至少仍需生成 `file_integrity` 和 `lifecycle_finalize` 两个阶段，以便 Dashboard 能区分“未执行”与“被增量跳过”。
 
 **C. Evaluation Trace（评估追踪）**
 
-每次评估运行生成唯一的 `trace_id`，并与最终的 `run_id` 关联，记录从数据集加载到评估报告产出的全过程：
+每次评估运行生成唯一的 `trace_id`，并与最终的 `run_id` 关联，记录从数据集加载到评估报告产出的全过程。`EvaluationTrace` 在统一顶层字段之外，至少额外包含：
 
-**基础信息**：
-- `trace_id`：评估请求唯一标识
-- `trace_type`：`"evaluation"`
-- `run_id`：评估运行标识
-- `start_time` / `end_time` / `duration_ms`：评估开始时间、结束时间与总耗时
-- `collection`：被评估的知识库集合
-- `dataset_version`：评估数据集版本
-- `backends`：启用的 evaluator 列表
-- `status`：本次评估状态
+- `run_id`：评估运行标识。
+- `dataset_version`：评估数据集版本。
+- `backends`：启用的 evaluator 列表。
+- `metrics_summary`：本次运行的关键指标摘要。
+- `quality_gate_status`：质量门槛通过/失败状态。
+- `baseline_delta`：相对 baseline 的变化摘要。
 
-**各阶段详情 (Stages)**：
+Evaluation 链路的规范阶段名固定如下：
 
-| 阶段 | 记录内容 |
+| 阶段名 | 记录内容 |
 |-----|---------|
-| **Dataset Load** | 数据集名称、版本、样本数、过滤标签、耗时 |
-| **Sample Build** | query / ground_truth / citations / trace 关联装配情况、耗时 |
-| **Evaluator Execute** | 启用的 evaluator、成功/失败后端、降级信息、耗时 |
-| **Metrics Aggregate** | retrieval / answer 指标摘要、baseline 差异、quality gate 判定、耗时 |
-| **Report Persist** | 报告路径、SQLite 写入状态、`run_id`、耗时 |
+| `dataset_load` | 数据集名称、版本、样本数、过滤标签 |
+| `sample_build` | query / ground_truth / citations / trace 关联装配情况 |
+| `evaluator_execute` | 启用的 evaluator、成功/失败后端、降级信息 |
+| `metrics_aggregate` | retrieval / answer 指标摘要、baseline 差异、quality gate 判定 |
+| `report_persist` | 报告路径、SQLite 写入状态、`run_id` |
 
-**汇总指标**：
-- `metrics_summary`：本次运行的关键指标摘要
-- `quality_gate_status`：质量门槛通过/失败状态
-- `baseline_delta`：相对 baseline 的变化摘要
-- `error`：异常信息（若有）
+补充约束：
+
+- F 阶段首先落地统一的 Trace 契约和 Ingestion / Query 双链路打点；`EvaluationTrace` 的 schema 必须同时就位，但评估链路打点可在后续评估阶段接入。
+- 因此 Dashboard、`TraceService` 与 MCP Tool 必须从一开始就按三类 `trace_type` 设计过滤和展示能力，而不是只为前两类硬编码。
 
 #### 3.4.3 技术方案：结构化日志 + 本地 Web Dashboard
 
@@ -1027,18 +1044,22 @@ logs/traces.jsonl
 
 追踪机制建议通过统一的 Trace 基础设施实现，而不是让每个模块手工拼装日志。推荐实现方式如下：
 
-- 在 Pipeline 入口生成 `trace_id`，并创建当前请求的 Trace 上下文。
-- 通过 `TraceManager` 或等价组件统一管理阶段开始、阶段结束、异常捕获、指标聚合和最终落盘。
+- 在 Pipeline、Query Engine、Evaluation Runner 等入口生成 `trace_id`，并创建当前请求的 Trace 上下文。
+- 通过 `TraceManager` 统一管理阶段开始、阶段结束、异常捕获和最终收敛；通过 `StageRecorder` 负责单阶段摘要与指标记录。
 - 在 Loader、Splitter、Transform、Embedding、VectorStore、Retriever、Reranker、LLM、Evaluator 等抽象层边界自动打点，而不是在每个具体实现里重复写日志逻辑。
 - 对每个阶段记录标准化的输入摘要、输出摘要、耗时、provider、重试次数和异常信息。
-- 在请求结束时聚合阶段级信息，生成一条完整 Trace 记录并写入 JSONL。
+- 在请求结束时先 `finish_trace()` 得到稳定的结构化记录，再交由持久化层写入 JSONL；Trace 数据结构本身不直接承担文件格式和 IO 细节。
 
 推荐的实现职责拆分：
 
-- `trace_manager.py`：Trace 上下文创建、阶段注册、结束收敛、落盘。
-- `trace_schema.py`：`QueryTrace`、`IngestionTrace`、`StageTrace` 等数据结构定义。
-- `trace_logger.py`：`logging` 与 JSON Formatter 封装。
+- `trace_schema.py`：`QueryTrace`、`IngestionTrace`、`EvaluationTrace`、`StageTrace` 等数据结构定义，保证 `to_dict()` 契约稳定。
+- `trace_manager.py`：Trace 生命周期管理、阶段注册、结束收敛、顶层状态聚合。
+- `stage_recorder.py`：统一生成阶段级摘要、指标与失败节点信息，避免各链路重复拼装阶段对象。
 - `trace_utils.py`：输入输出摘要裁剪、异常序列化、时间统计、敏感字段脱敏。
+- `storage/traces/jsonl_writer.py`：追加写入 `logs/traces.jsonl`，保证“一次请求一行 JSON”。
+- `storage/traces/trace_repository.py`：封装 Trace 读取、按 `trace_id` 查询、按 `trace_type/status/collection` 过滤，且对损坏行具备容错能力。
+- `observability/logging/logger.py` 与 `observability/logging/json_formatter.py`：封装 Trace logger 和通用结构化日志格式。
+- `ingestion_pipeline/callbacks.py`：定义 `PipelineEvent`、`StageEvent`、`ProgressEvent`、`ErrorEvent` 等稳定回调契约，供 Trace/日志/实时进度共用。
 
 指标记录建议至少覆盖：
 
@@ -1065,6 +1086,7 @@ logs/traces.jsonl
 为避免追踪机制反向污染业务层，需要额外满足以下约束：
 
 - 业务组件只暴露必要的摘要信息，不负责决定日志格式。
+- `TraceManager` 负责生命周期，不直接依赖具体文件格式；落盘由 `JsonlTraceWriter` / `TraceRepository` 负责。
 - Trace 写入失败不能拖垮主链路，最多降级为告警或 fallback 到简化日志。
 - 所有敏感字段必须在落盘前脱敏，例如密钥、认证头、完整原始提示词中的敏感内容。
 
@@ -1388,7 +1410,10 @@ Hybrid Search 命中 Chunk（正文含 "[图片描述: 系统采用三层架构.
 | SHA256 增量判断 | 去重与增量更新规则 | 内容不变是否跳过、内容变化是否触发重建 |
 | citation 生成 | 引用格式、来源映射、位置定位 | 返回的文档 ID、chunk 引用、页码或来源路径是否正确 |
 | MCP 参数校验 | tool 入参与错误处理 | 必填字段缺失、类型错误、非法枚举值是否被拦截 |
-| Trace 辅助逻辑 | 摘要裁剪、时间统计、敏感字段脱敏 | 输出字段是否完整、敏感信息是否被过滤 |
+| Trace Schema / TraceManager | Trace 生命周期、`to_dict()` 契约、未结束阶段自动收敛 | 顶层字段是否稳定、重复阶段名是否被拦截、`json.dumps()` 是否可直接序列化 |
+| StageRecorder / ProgressEvent | 阶段级摘要与回调事件结构是否稳定 | 阶段摘要字段是否完整、进度事件是否包含 `trace_id`/`current_stage`/`status`/`elapsed_ms` 等关键字段 |
+| Trace 辅助逻辑 | 摘要裁剪、异常序列化、敏感字段脱敏 | 输出字段是否完整、异常是否被标准化、敏感信息是否被过滤 |
+| Trace Repository / TraceService | JSONL 扫描、过滤、详情查询与损坏行容错 | `trace_id` 查询是否稳定、损坏日志是否被跳过、过滤条件是否生效 |
 
 **技术选型**
 
@@ -1426,7 +1451,9 @@ Hybrid Search 命中 Chunk（正文含 "[图片描述: 系统采用三层架构.
 | PDF -> Markdown -> chunk -> embedding -> Chroma upsert | Ingestion 主链路中的模块衔接是否正确 | 文档是否被成功切分、向量是否生成、payload 是否完成 upsert |
 | sparse + dense + RRF + rerank | 检索链路中多策略组合是否协同工作 | 稀疏/稠密召回结果是否被正确融合、rerank 后结果结构是否完整 |
 | MCP tool -> query engine | MCP 接口层与内部查询引擎的集成是否正常 | 参数是否正确传递、响应结构是否符合 tool 协议、错误是否被正确包装 |
-| trace 写入与 Dashboard 数据读取 | 可观测性链路是否闭环 | Trace 是否成功落盘、Dashboard 读取后字段是否完整、`trace_id` 是否可检索 |
+| Ingestion Pipeline -> TraceRepository | 摄取链路 Trace 是否成功闭环 | `trace_id` 是否生成、规范阶段名是否完整、跳过/失败原因是否可回读 |
+| Query Engine -> TraceRepository | 查询链路 Trace 是否成功闭环 | 检索/融合/精排/生成阶段是否落盘、返回结果是否携带 `trace_id` |
+| TraceService / MCP `get_trace_detail` | Trace 读取服务和对外工具契约是否稳定 | `trace_id` 查询是否返回完整详情、非法 `trace_id` 与损坏日志是否被统一收敛 |
 | 工厂装配 + 配置切换 | 配置驱动的组件切换是否真正生效 | 切换不同 provider/backend 后，链路是否使用预期实现 |
 | SQLite / Chroma / JSONL 协同 | 本地基础设施之间的数据一致性 | 文档状态、向量写入、Trace 记录之间是否能相互对应 |
 
@@ -2036,7 +2063,7 @@ RAGMS/                                                         # 项目根目录
 | 模块 | 职责 | 关键技术点 |
 |---|---|---|
 | `core/models/` | 定义文档、chunk、检索结果、评估结果、响应对象等领域模型。 | 强类型领域建模、跨模块统一数据契约。 |
-| `core/query_engine/engine.py` | 查询链路主编排器，串联 Query Processor、Hybrid Search、Reranker 与 Response Builder。 | 在线 Query Flow 编排、模块解耦、统一返回结构。 |
+| `core/query_engine/engine.py` | 查询链路主编排器，串联 Query Processor、Hybrid Search、Reranker、Response Builder 与 Answer Generator。 | 在线 Query Flow 编排、模块解耦、统一返回结构与 `trace_id` 透传。 |
 | `core/query_engine/query_processor.py` | 处理用户查询的关键词提取、同义词扩展与 metadata filter 解析。 | Query 预处理、过滤条件解析、输入归一化。 |
 | `core/query_engine/hybrid_search.py` | 统一编排 Dense Retrieval、Sparse Retrieval 与 RRF Fusion。 | 双路检索并行、RRF 融合、Top-M 候选生成。 |
 | `core/query_engine/retrievers/` | 实现 Dense Retrieval 与 Sparse Retrieval。 | 向量检索、BM25 检索、检索结果标准化。 |
@@ -2044,24 +2071,24 @@ RAGMS/                                                         # 项目根目录
 | `core/query_engine/response_builder.py` | 生成 CLI / MCP 共用的通用结构化响应，附带引用和图片内容。 | 引用拼装、图片 Base64 编码、结果结构标准化。 |
 | `core/query_engine/citation_builder.py` | 从检索结果构建引用信息。 | chunk 溯源、路径/页码映射、引用规范化。 |
 | `core/query_engine/answer_generator.py` | 调用 LLM 生成最终回答。 | 统一 LLM 接口、答案生成、上下文使用控制。 |
-| `core/management/data_service.py` | 为 Dashboard 提供文档列表、Chunk 详情、图片预览等数据读取能力。 | Chroma 元数据查询、图片列表聚合、只读数据服务。 |
-| `core/management/document_admin_service.py` | 负责文档删除、重建和管理操作。 | Chroma 删除、BM25 索引移除、图片删除、完整性记录清理。 |
-| `core/management/trace_service.py` | 提供 Trace 日志读取、分类和详情查询能力。 | 读取 `logs/traces.jsonl`、按 `trace_type` 分类 `query / ingestion / evaluation`、返回链路详情。 |
-| `core/evaluation/report_service.py` | 管理评估报告的读取、对比与写入能力。 | 报告落盘、只读摘要查询、供 Dashboard 评估面板复用。 |
+| `core/management/data_service.py` | 为 Dashboard 提供集合统计、文档列表、Chunk 详情、图片预览等只读数据能力。 | collection 统计聚合、Chroma 元数据查询、图片列表聚合、系统总览指标收敛。 |
+| `core/management/document_admin_service.py` | 负责文档摄取触发、删除、重建和管理操作。 | 以服务层收敛摄取入口、Chroma 删除、BM25 索引移除、图片删除、完整性记录清理。 |
+| `core/management/trace_service.py` | 提供 Trace 列表、筛选、摘要、详情、失败聚合和对比查询能力，作为 Dashboard 与 MCP 的只读服务层。 | 读取 `logs/traces.jsonl`、按 `trace_type/status/collection` 过滤、按 `trace_id` 返回链路详情、最近失败聚合、trace 对比、对损坏日志容错。 |
+| `core/evaluation/report_service.py` | 管理评估报告的读取、对比与写入能力。 | 报告落盘、只读摘要与详情查询、运行列表聚合、供 Dashboard 评估面板复用。 |
 | `core/evaluation/runner.py` | 执行检索/问答评估任务。 | 多评估后端组合、批量运行、结果汇总。 |
 | `core/evaluation/dataset_loader.py` | 加载并标准化评估数据集。 | 数据集 schema 统一、离线评估输入收敛。 |
 | `core/evaluation/metrics/` | 实现检索指标与回答质量指标。 | `hit_rate`、`MRR`、`context_precision`、`answer_relevancy` 等。 |
-| `core/trace_collector/trace_manager.py` | 管理一次请求的 Trace 生命周期。 | `trace_id` 生成、阶段注册、异常捕获、最终落盘。 |
+| `core/trace_collector/trace_manager.py` | 管理一次请求的 Trace 生命周期。 | `trace_id` 生成、阶段注册、异常捕获、状态聚合与未结束阶段自动收敛，不直接承担文件 IO 细节。 |
 | `core/trace_collector/trace_schema.py` | 定义 `QueryTrace`、`IngestionTrace`、`EvaluationTrace`、`StageTrace` 等结构。 | 统一 Trace 数据契约、结构化日志模型。 |
-| `core/trace_collector/stage_recorder.py` | 记录阶段耗时、输入输出摘要和指标。 | 阶段级打点、指标聚合、失败节点定位。 |
+| `core/trace_collector/stage_recorder.py` | 记录阶段耗时、输入输出摘要和指标，并统一规范阶段字段。 | 阶段级打点、摘要裁剪、指标聚合、失败节点定位、规范阶段名落盘。 |
 | `core/trace_collector/trace_utils.py` | 提供摘要裁剪、异常序列化、敏感字段脱敏等能力。 | Trace 安全落盘、日志可读性优化。 |
 
 #### 5.3.4 `ingestion_pipeline` 层
 
 | 模块 | 职责 | 关键技术点 |
 |---|---|---|
-| `ingestion_pipeline/pipeline.py` | 离线摄取主编排器，统一编排 Loader、Chunking、Transform、Embedding、Storage 五段流程。 | Ingestion Flow 编排、阶段调度、回调机制、错误恢复。 |
-| `ingestion_pipeline/callbacks.py` | 定义 Pipeline 回调协议与默认钩子。 | before/after stage 回调、进度通知、Trace/日志联动。 |
+| `ingestion_pipeline/pipeline.py` | 离线摄取主编排器，统一编排 `file_integrity -> load -> chunking -> transform -> embedding -> storage -> lifecycle_finalize` 固定阶段序列。 | Ingestion Flow 编排、阶段调度、回调机制、错误恢复、`trace_id` 透传。 |
+| `ingestion_pipeline/callbacks.py` | 定义 Pipeline 回调协议与默认钩子。 | `PipelineEvent` / `StageEvent` / `ProgressEvent` / `ErrorEvent` 稳定负载、进度通知、Trace/日志联动。 |
 | `ingestion_pipeline/file_integrity.py` | 负责 SHA256 指纹计算与“未变更则跳过”逻辑。 | 文件完整性校验、增量摄取、跳过策略。 |
 | `ingestion_pipeline/lifecycle/document_registry.py` | 维护文档登记、状态变更与来源映射。 | 文档注册、状态流转、来源追踪。 |
 | `ingestion_pipeline/lifecycle/lifecycle_manager.py` | 负责摄取侧文档删除、重建与生命周期管理。 | 生命周期编排、重建控制、与存储层级联协作。 |
@@ -2115,15 +2142,15 @@ RAGMS/                                                         # 项目根目录
 | `storage/indexes/bm25_indexer.py` | 稀疏索引访问层与文档移除能力。 | BM25 建索引、删索引、稀疏检索支持。 |
 | `storage/indexes/bm25_tokenizer.py` | 为 BM25 检索提供分词与标准化。 | 中文/混合文本分词、稀疏索引预处理。 |
 | `storage/images/image_storage.py` | 存储和读取图片资源。 | 图片落盘、路径管理、文档删除级联清理。 |
-| `storage/traces/jsonl_writer.py` | 将 Trace 以 JSONL 形式写入本地文件。 | 结构化日志、统一写入 `logs/traces.jsonl`。 |
-| `storage/traces/trace_repository.py` | 封装 Trace 的查询与存储接口。 | Trace 落盘抽象、供 Dashboard / tools 复用。 |
+| `storage/traces/jsonl_writer.py` | 将 Trace 以 JSONL 形式写入本地文件。 | 结构化日志、统一写入 `logs/traces.jsonl`、一条 Trace 一行 JSON。 |
+| `storage/traces/trace_repository.py` | 封装 Trace 的追加写入、列表查询和详情读取接口。 | Trace 持久化抽象、按条件过滤、损坏行容错、供 Dashboard / MCP tools 复用。 |
 
 #### 5.3.7 `observability` 层
 
 | 模块 | 职责 | 关键技术点 |
 |---|---|---|
-| `observability/logging/logger.py` | 提供统一日志器入口。 | Python `logging` 封装、模块化日志管理。 |
-| `observability/logging/json_formatter.py` | 将日志和 Trace 格式化为 JSON。 | JSON Lines、结构化字段输出。 |
+| `observability/logging/logger.py` | 提供统一日志器入口和 Trace 专用 logger 工厂。 | Python `logging` 封装、模块化日志管理、文件 handler 复用。 |
+| `observability/logging/json_formatter.py` | 将日志和 Trace 格式化为 JSON。 | JSON Lines、结构化字段输出、统一时间与异常字段格式。 |
 | `observability/metrics/ingestion_metrics.py` | 定义和汇总摄取链路指标。 | 文档数、chunk 数、阶段耗时统计。 |
 | `observability/metrics/query_metrics.py` | 定义和汇总查询链路指标。 | 召回数量、rerank 耗时、总响应耗时。 |
 | `observability/metrics/evaluation_metrics.py` | 定义和汇总评估链路指标。 | 评估结果聚合、baseline 差异、quality gate 指标。 |
@@ -3131,64 +3158,121 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 
 #### 阶段 F：Trace 基础设施与打点
 
-目标：增强 `TraceManager`，实现结构化日志持久化，在 Ingestion + Query 双链路打点，添加 Pipeline 进度回调，并在底层能力稳定后接入 `get_trace_detail` MCP Tool。
+目标：落地第 3.4 节定义的统一 Trace 数据契约、JSONL 持久化与读写服务，在不破坏 C 阶段 Pipeline 回调协议和 D/E 阶段 Query / MCP 主链路的前提下，为 Ingestion + Query 双链路提供可回放、可检索、可对外暴露的 Trace 基础设施，并为后续 G 阶段 Dashboard 提供稳定数据源。F 阶段完成后，系统必须同时具备以下能力：每次 Ingestion / Query 请求产生唯一 `trace_id`；阶段级耗时、摘要和失败信息可稳定落盘；`TraceService` 可按 `trace_type` / `status` / `collection` / `trace_id` 读取；MCP Client 可通过 `get_trace_detail` 查询单次链路详情。
 
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
-| F1 | 实现 Trace 模型与 TraceManager | [ ] |  |  |
-| F2 | 实现 JSONL 日志持久化 | [ ] |  |  |
-| F3 | 为 Ingestion 打点 | [ ] |  |  |
-| F4 | 为 Query 打点 | [ ] |  |  |
-| F5 | 增加进度回调与双链路集成测试 | [ ] |  |  |
+| F1 | 实现 Trace Schema、StageRecorder 与 TraceManager | [ ] |  |  |
+| F2 | 实现 JSONL 持久化、TraceRepository 与 Trace Logger | [ ] |  |  |
+| F3 | 为 Ingestion 打点并回传 `trace_id` | [ ] |  |  |
+| F4 | 为 Query 打点并回传 `trace_id` | [ ] |  |  |
+| F5 | 规范进度回调并实现 TraceService 读取能力 | [ ] |  |  |
 | F6 | 接入 `get_trace_detail` MCP Tool | [ ] |  |  |
 
-##### F1 实现 Trace 模型与 TraceManager
+##### F1 实现 Trace Schema、StageRecorder 与 TraceManager
 
-- 目标：定义 QueryTrace / IngestionTrace / StageTrace 以及 TraceManager。
-- 修改文件：`src/ragms/core/trace_collector/trace_schema.py`、`src/ragms/core/trace_collector/trace_manager.py`
-- 实现类/函数：`TraceManager.start_trace()`、`TraceManager.finish_trace()`
-- 阶段依赖准备：F 阶段无新增强制第三方包，沿用 E 阶段已安装依赖即可；若需要优化 JSON 序列化性能，可选执行 `source .venv/bin/activate && python -m pip install orjson`。
-- 验收标准：Trace 生命周期完整；阶段可注册与收敛。
-- 测试方法：`pytest tests/unit/core/trace_collector/test_trace_manager.py`
+- 目标：定义 `QueryTrace`、`IngestionTrace`、`EvaluationTrace`、`StageTrace` 的稳定数据契约，补齐阶段记录器与 Trace 生命周期管理器，使后续 F2-F6 都在同一份 schema 上工作。
+- 前置依赖：无。
+- 修改文件：`src/ragms/core/trace_collector/trace_schema.py`、`src/ragms/core/trace_collector/trace_manager.py`、`src/ragms/core/trace_collector/stage_recorder.py`、`src/ragms/core/trace_collector/trace_utils.py`、`tests/unit/core/trace_collector/test_trace_manager.py`、`tests/unit/core/trace_collector/test_trace_utils.py`
+- 实现类/函数：`TraceManager.start_trace()`、`TraceManager.start_stage()`、`TraceManager.finish_stage()`、`TraceManager.finish_trace()`、`StageRecorder.record_stage()`、`serialize_exception()`、`build_input_summary()`、`build_output_summary()`
+- 阶段依赖准备：F 阶段无新增强制第三方包，沿用 E 阶段已安装依赖即可；若后续需要优化 JSON 序列化性能，可选执行 `source .venv/bin/activate && python -m pip install orjson`，但不得让 schema 契约依赖某个序列化库。
+- 实现约束：
+  - 顶层 `trace_type` 必须至少支持 `query` / `ingestion` / `evaluation` 三类，尽管 F3-F4 只先为前两类接入真实打点。
+  - 所有 `Trace` 与 `StageTrace` 的 `to_dict()` 输出都必须能直接 `json.dumps()`，不得包含 `datetime`、异常对象、numpy 数组等不可序列化值。
+  - 单个 trace 内的 `stage_name` 必须唯一；重复注册必须被显式拦截，而不是静默覆盖。
+  - `finish_trace()` 必须自动收敛尚未结束的阶段，统一补齐 `finished_at`、`elapsed_ms` 和最终状态，避免产生半结构化记录。
+  - `StageRecorder` 负责把“原始运行事实”转成稳定 schema，不允许上层模块自由拼接结构不一的阶段 payload。
+- 验收标准：
+  - Query / Ingestion / Evaluation 三类 Trace 的顶层字段与第 3.4.2 节一致。
+  - `finish_trace()` 后 `to_dict()` 输出至少包含 `trace_id`、`trace_type`、`status`、`started_at`、`finished_at`、`duration_ms`、`stages`。
+  - 未结束阶段会被自动收敛；异常对象与敏感字段会被标准化或脱敏。
+- 测试方法：`pytest tests/unit/core/trace_collector/test_trace_manager.py tests/unit/core/trace_collector/test_trace_utils.py`
 
-##### F2 实现 JSONL 日志持久化
+##### F2 实现 JSONL 持久化、TraceRepository 与 Trace Logger
 
-- 目标：将 Trace 结构化写入 `logs/traces.jsonl`。
-- 修改文件：`src/ragms/storage/traces/jsonl_writer.py`、`src/ragms/observability/logging/json_formatter.py`
-- 实现类/函数：`JsonlTraceWriter.write()`、`JsonFormatter.format()`
-- 验收标准：单次请求可落为一条完整 JSONL 记录。
-- 测试方法：`pytest tests/unit/observability/test_json_formatter.py`
+- 目标：将 F1 产出的稳定 Trace 记录安全地持久化到 `logs/traces.jsonl`，并建立供 Dashboard / MCP 复用的 Trace 读写接口。
+- 前置依赖：F1。
+- 修改文件：`src/ragms/storage/traces/jsonl_writer.py`、`src/ragms/storage/traces/trace_repository.py`、`src/ragms/observability/logging/logger.py`、`src/ragms/observability/logging/json_formatter.py`、`tests/unit/storage/traces/test_jsonl_writer.py`、`tests/unit/storage/traces/test_trace_repository.py`、`tests/unit/observability/test_json_formatter.py`
+- 实现类/函数：`JsonlTraceWriter.write()`、`TraceRepository.append()`、`TraceRepository.get_by_trace_id()`、`TraceRepository.list_traces()`、`get_trace_logger()`、`JsonFormatter.format()`
+- 实现约束：
+  - 持久化格式固定为 append-only JSON Lines，一次请求只追加一行完整 Trace，禁止将阶段拆成多行日志。
+  - `TraceRepository` 的读取逻辑必须对损坏行和不完整行容错，单条坏数据不能导致全量查询失败。
+  - 写入失败时最多记录告警，不能拖垮 Query / Ingestion 主链路。
+  - `JsonFormatter` 必须保证时间字段、异常字段和日志等级字段输出格式稳定，避免不同 logger 各写一套 JSON 结构。
+- 验收标准：
+  - 单次请求可落为一条完整 JSONL 记录，且字段与 F1 schema 一致。
+  - `TraceRepository` 可按 `trace_id` 返回详情，并按 `trace_type` / `status` / `collection` 列表过滤。
+  - 已存在损坏日志行时，正常 Trace 仍可被读取。
+- 测试方法：`pytest tests/unit/storage/traces/test_jsonl_writer.py tests/unit/storage/traces/test_trace_repository.py tests/unit/observability/test_json_formatter.py`
 
-##### F3 为 Ingestion 打点
+##### F3 为 Ingestion 打点并回传 `trace_id`
 
-- 目标：在 File Integrity、Loader、Splitter、Transform、Embedding、Upsert 等阶段统一打点。
-- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/ingestion_pipeline/chunking/split.py`、`src/ragms/ingestion_pipeline/transform/pipeline.py`、`src/ragms/ingestion_pipeline/embedding/pipeline.py`、`src/ragms/ingestion_pipeline/storage/pipeline.py`
-- 实现类/函数：`record_ingestion_stage()`
-- 验收标准：Ingestion Trace 可完整显示各阶段耗时、状态和关键摘要。
+- 目标：在 C 阶段的 Ingestion 主链路中接入统一 Trace，覆盖 `file_integrity -> load -> chunking -> transform -> embedding -> storage -> lifecycle_finalize` 的稳定打点，并把 `trace_id` 透传给上层调用方。
+- 前置依赖：阶段 C Ingestion 主链路已完成，F1，F2。
+- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/ingestion_pipeline/callbacks.py`、`src/ragms/ingestion_pipeline/file_integrity.py`、`src/ragms/ingestion_pipeline/chunking/split.py`、`src/ragms/ingestion_pipeline/transform/pipeline.py`、`src/ragms/ingestion_pipeline/embedding/pipeline.py`、`src/ragms/ingestion_pipeline/storage/pipeline.py`、`tests/integration/test_ingestion_trace_logging.py`
+- 实现类/函数：`IngestionPipeline.run()`、`record_ingestion_stage()`、`attach_ingestion_trace()`
+- 实现约束：
+  - Trace 必须在 Pipeline 入口创建，`trace_id` 在同一次摄取内保持不变，并贯穿回调、返回值和日志。
+  - 阶段名必须使用第 3.4.2 节定义的规范名称，不得在实现中混用 `split` / `chunking`、`upsert` / `storage` 等别名。
+  - 每个阶段至少记录 `elapsed_ms`、`input_summary`、`output_summary`、`method/provider`、`retry_count` 和必要的计数类指标。
+  - 对“增量跳过”的文档必须生成可解释的 Trace：至少保留 `file_integrity` 与 `lifecycle_finalize` 阶段，并将最终状态标记为 `skipped`。
+  - Pipeline 的最终结果、CLI 输出或上层服务返回值中必须能获取到非空 `trace_id`，供 Dashboard 和 MCP 回查。
+- 验收标准：
+  - 一次正常摄取会生成完整的 Ingestion Trace，阶段顺序与 C1 固定顺序一致。
+  - 跳过、失败、部分成功场景都能从 Trace 中读出具体阶段和原因。
+  - Ingestion 调用方可直接拿到 `trace_id`，无需从日志中反查。
 - 测试方法：`pytest tests/integration/test_ingestion_trace_logging.py`
 
-##### F4 为 Query 打点
+##### F4 为 Query 打点并回传 `trace_id`
 
-- 目标：在 Query Processor、Hybrid Search、Reranker、Response Builder 等阶段统一打点。
-- 修改文件：`src/ragms/core/query_engine/engine.py`、`src/ragms/core/query_engine/query_processor.py`、`src/ragms/core/query_engine/hybrid_search.py`、`src/ragms/core/query_engine/reranker.py`、`src/ragms/core/query_engine/response_builder.py`
-- 实现类/函数：`record_query_stage()`
-- 验收标准：Query Trace 可完整显示检索、融合、精排、生成细节。
+- 目标：在 Query 主链路中接入统一 Trace，覆盖 Query 预处理、双路召回、融合、重排、结构化响应和答案生成，并把 `trace_id` 透传给 CLI / MCP / 服务层调用方。
+- 前置依赖：阶段 D/E 查询与 MCP 主链路已完成，F1，F2。
+- 修改文件：`src/ragms/core/query_engine/engine.py`、`src/ragms/core/query_engine/query_processor.py`、`src/ragms/core/query_engine/hybrid_search.py`、`src/ragms/core/query_engine/reranker.py`、`src/ragms/core/query_engine/response_builder.py`、`src/ragms/core/query_engine/answer_generator.py`、`tests/integration/test_query_trace_logging.py`
+- 实现类/函数：`QueryEngine.run()`、`record_query_stage()`、`attach_query_trace()`
+- 实现约束：
+  - Trace 必须在 Query 入口创建，并贯穿 Query Processor、Hybrid Search、Reranker、Response Builder 和 Answer Generator。
+  - 阶段名必须使用第 3.4.2 节定义的规范名称：`query_processing`、`dense_retrieval`、`sparse_retrieval`、`fusion`、`rerank`、`response_build`、`answer_generation`。
+  - 每个阶段至少记录耗时、排序或数量摘要以及核心组件信息；例如 `dense_retrieval` 记录召回数量与 provider，`rerank` 记录 backend 和 fallback 信息，`response_build` 记录 citation 数量。
+  - 若未启用生成式回答，则 `answer_generation` 阶段不写空占位项，但 Trace 仍需完整闭环并返回 `trace_id`。
+  - CLI、MCP Tool 与内部服务层对 Query 的统一返回结构必须预留 `trace_id` 字段，避免后续工具层再去解析日志。
+- 验收标准：
+  - 一次查询会生成完整的 Query Trace，并可区分检索、融合、精排、响应构建与生成阶段。
+  - 开启或关闭生成式回答时，Trace 结构行为稳定且可解释。
+  - Query 调用方可直接拿到 `trace_id`，供后续 `get_trace_detail` 和 Dashboard 使用。
 - 测试方法：`pytest tests/integration/test_query_trace_logging.py`
 
-##### F5 增加进度回调与双链路集成测试
+##### F5 规范进度回调并实现 TraceService 读取能力
 
-- 目标：为 Ingestion / Dashboard 增加进度回调，并完成双链路 Trace 集成验证。
-- 修改文件：`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/core/management/trace_service.py`
-- 实现类/函数：`on_progress`、`TraceService.list_traces()`
-- 验收标准：摄取过程可实时回传进度；Dashboard 可按类型读取 Trace。
-- 测试方法：`pytest tests/integration/test_trace_write_and_read.py`
+- 目标：在不破坏 C1 已定义 Pipeline 回调协议的前提下，稳定 `ProgressEvent` 的字段约束，并实现面向 Dashboard / MCP 的 `TraceService` 读取能力。
+- 前置依赖：C1，F2，F3。
+- 修改文件：`src/ragms/ingestion_pipeline/callbacks.py`、`src/ragms/ingestion_pipeline/pipeline.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/storage/traces/trace_repository.py`、`tests/unit/ingestion_pipeline/test_pipeline_callbacks.py`、`tests/integration/test_trace_write_and_read.py`
+- 实现类/函数：`PipelineCallback.on_progress()`、`TraceService.list_traces()`、`TraceService.get_trace_detail()`、`TraceService.summarize_trace()`
+- 实现约束：
+  - 不引入与 C1 冲突的新回调签名；统一沿用 `PipelineCallback.on_progress(event: ProgressEvent)`。
+  - `ProgressEvent` 至少稳定包含 `trace_id`、`source_path`、`document_id`、`current_stage`、`completed_stages`、`total_stages`、`status`、`elapsed_ms`；若 `collection` 或其他扩展字段暂存于 `metadata`，也必须形成文档化约定。
+  - 进度事件至少在 Pipeline 启动、阶段完成、失败终止三类时机可被稳定消费，且 `on_progress` 为 no-op 时不影响现有行为。
+  - `TraceService` 是只读服务层，只负责列表、筛选、摘要和详情查询；不得在其中混入 Trace 生成或文件写入逻辑。
+- 验收标准：
+  - Ingestion 链路运行时可稳定收到进度事件，事件字段足够驱动 Dashboard 进度展示或日志订阅。
+  - `TraceService.list_traces()` 可按 `trace_type` / `status` / `collection` 返回摘要列表。
+  - `TraceService.get_trace_detail()` 返回的结构与第 3.4.2 节 schema 一致。
+- 测试方法：`pytest tests/unit/ingestion_pipeline/test_pipeline_callbacks.py tests/integration/test_trace_write_and_read.py`
 
 ##### F6 接入 `get_trace_detail` MCP Tool
 
-- 目标：在 TraceManager、JSONL 持久化和 TraceService 能力稳定后，对外暴露 `get_trace_detail` MCP Tool。
+- 目标：在 Trace schema、持久化和读取服务稳定后，对外暴露 `get_trace_detail` MCP Tool，使外部 Agent 可直接查询单次链路详情。
+- 前置依赖：F2，F5；且 F3/F4 已能稳定产出 Query / Ingestion Trace。
 - 修改文件：`src/ragms/mcp_server/tools/traces.py`、`src/ragms/mcp_server/schemas.py`、`src/ragms/mcp_server/tool_registry.py`、`src/ragms/core/management/trace_service.py`、`tests/unit/mcp_server/tools/test_traces_tool.py`、`tests/integration/test_mcp_server_trace.py`
 - 实现类/函数：`handle_get_trace_detail()`、`serialize_trace_detail()`、`TraceService.get_trace_detail()`
-- 验收标准：工具可按 `trace_id` 返回 `trace_type`、阶段列表、耗时、状态、输入输出摘要、错误信息和 fallback 记录；缺失 trace、损坏日志和非法 `trace_id` 会被统一收敛；MCP Client 可通过 tool 直接查询真实 Trace 记录。
+- 实现约束：
+  - Tool 输入至少包含 `trace_id`；参数校验失败、trace 不存在、日志损坏、Trace 结构不完整等异常都必须被统一包装成稳定 MCP 错误响应，而不是直接抛 Python 异常。
+  - Tool 输出必须与第 3.4.2 节 schema 对齐，至少返回 `trace_id`、`trace_type`、`status`、`duration_ms`、`stages` 以及顶层错误信息。
+  - 返回的阶段详情必须保留 `input_summary`、`output_summary`、`metadata`、`error` 和 fallback 信息，不能只做“精简文本摘要”。
+  - 工具实现不得直接解析 JSONL 文件细节，必须通过 `TraceService` / `TraceRepository` 复用底层读取逻辑。
+- 验收标准：
+  - MCP Client 可通过 `get_trace_detail` 直接查询真实 Query / Ingestion Trace 记录。
+  - 非法 `trace_id`、不存在的 trace、损坏日志行都能被统一收敛并返回可诊断错误。
+  - Tool 输出可直接供外部 Agent 使用，而无需再猜测字段含义。
 - 测试方法：`pytest tests/unit/mcp_server/tools/test_traces_tool.py tests/integration/test_mcp_server_trace.py`
 
 #### 阶段 G：可视化管理平台 Dashboard
@@ -3198,87 +3282,176 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
 | G1 | 建立 Dashboard 应用壳、页面注册与运行配置 | [ ] |  |  |
-| G2 | 完成 Dashboard 共享数据聚合接口与通用组件 | [ ] |  |  |
-| G3 | 实现系统总览页 | [ ] |  |  |
-| G4 | 实现数据浏览器页 | [ ] |  |  |
-| G5 | 实现 Ingestion 管理页 | [ ] |  |  |
+| G2 | 收敛 Dashboard Context、共享读服务扩展与占位页策略 | [ ] |  |  |
+| G3 | 完成 Dashboard 通用组件与共享展示契约 | [ ] |  |  |
+| G4 | 实现系统总览页 | [ ] |  |  |
+| G5 | 实现数据浏览器页 | [ ] |  |  |
 | G6 | 实现 Ingestion 追踪页 | [ ] |  |  |
 | G7 | 实现 Query 追踪页 | [ ] |  |  |
-| G8 | 实现评估面板、页面联动与 Dashboard 验收 | [ ] |  |  |
+| G8 | 实现 Ingestion 管理页 | [ ] |  |  |
+| G9 | 实现评估面板、页面联动与 Dashboard 验收 | [ ] |  |  |
 
 ##### G1 建立 Dashboard 应用壳、页面注册与运行配置
 
 - 目标：搭建 Streamlit 入口、统一导航、页面注册、运行时依赖装配和自动刷新机制，保证 Dashboard 在本地离线环境下可直接启动。
+- 前置依赖：F2，F5。
 - 修改文件：`scripts/run_dashboard.py`、`src/ragms/observability/dashboard/app.py`、`src/ragms/runtime/container.py`、`src/ragms/runtime/config.py`
 - 实现类/函数：`run_dashboard_main()`、`render_app_shell()`、`build_dashboard_context()`
 - 阶段依赖准备：执行 `source .venv/bin/activate && python -m pip install streamlit pandas plotly`，补齐 G 阶段 Dashboard UI、数据表与图表依赖。
-- 验收标准：`scripts/run_dashboard.py` 可启动 Dashboard；六个页面可被统一注册与切换；自动刷新、日志路径、数据目录、端口等行为由配置驱动；无网络连接时页面仍可读取本地 JSONL / SQLite / Chroma 派生数据完成渲染。
+- 实现约束：
+  - 页面注册名称必须与第 5 章文件结构保持一致：`system_overview`、`data_browser`、`ingestion_management`、`ingestion_trace`、`query_trace`、`evaluation_panel`。
+  - 应用壳必须先完成六页面统一注册；未完成的页面允许渲染占位内容，但不得因为单页未完成导致整个 Dashboard 无法启动。
+  - Dashboard Context 必须统一注入 `settings`、`runtime`、`DataService`、`TraceService`、`DocumentAdminService`、`ReportService` 等依赖，页面层不得各自拼装运行时对象。
+  - 自动刷新、端口、标题、日志路径、数据目录等行为必须由配置驱动，不允许散落在页面内部作为魔法常量。
+- 验收标准：
+  - `scripts/run_dashboard.py` 可启动 Dashboard。
+  - 六个页面可被统一注册与切换；未完成页面也至少显示明确占位态而非报错。
+  - 无网络连接时页面仍可读取本地 JSONL / SQLite / Chroma 派生数据完成渲染。
 - 测试方法：`pytest tests/integration/test_dashboard_shell.py`
 
-##### G2 完成 Dashboard 共享数据聚合接口与通用组件
+##### G2 收敛 Dashboard Context、共享读服务扩展与占位页策略
 
-- 目标：收敛 Dashboard 侧所有查询与展示契约，避免页面直接读写底层存储；补齐表格、图表、Trace 时间线等共享组件，形成统一展示基座，并为评估面板建立只读报告装载契约。
-- 修改文件：`src/ragms/core/management/data_service.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/core/evaluation/report_service.py`、`src/ragms/observability/dashboard/components/tables.py`、`src/ragms/observability/dashboard/components/charts.py`、`src/ragms/observability/dashboard/components/trace_timeline.py`
-- 实现类/函数：`DataService.get_system_overview_metrics()`、`TraceService.list_trace_summaries()`、`ReportService.list_evaluation_runs()`、`render_table()`、`render_chart()`、`render_trace_timeline()`
-- 验收标准：页面层不直接拼接 SQL、JSONL 解析或 Chroma 查询；共享组件可稳定渲染空态、错误态和正常态；Trace 与 provider 信息采用动态字段渲染，不写死阶段名或模型名；评估面板只消费只读报告接口，不直接扫描页面层私有目录。
+- 目标：先收敛 Dashboard 依赖的读服务接口和页面上下文，保证后续 G3-G8 都建立在一致的数据契约上，而不是页面先写起来再反向补服务方法。
+- 前置依赖：G1。
+- 修改文件：`src/ragms/core/management/data_service.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/core/evaluation/report_service.py`、`src/ragms/observability/dashboard/app.py`
+- 实现类/函数：`build_dashboard_context()`、`DataService.get_system_overview_metrics()`、`TraceService.list_traces()`、`TraceService.get_trace_detail()`、`TraceService.get_recent_failures()`、`TraceService.compare_traces()`、`ReportService.list_evaluation_runs()`
+- 实现约束：
+  - 页面层不允许直接拼接 SQL、JSONL 解析、Chroma 查询或文件扫描逻辑。
+  - `TraceService` 必须延续 F5 的读服务主契约：`list_traces()` 和 `get_trace_detail()` 为基础入口；`get_recent_failures()`、`compare_traces()` 属于 G 阶段在此基础上的只读扩展，不得重写另一套读取路径。
+  - `list_traces()` 的返回契约必须能直接作为 Dashboard 列表摘要使用，不再额外引入与 F5 脱节的命名。
+  - `compare_traces()` 必须返回稳定的结构化对比结果，而不是仅返回两条原始 trace；结果至少包含 `left_trace_id`、`right_trace_id`、`stage_comparisons`、`metric_deltas`、`fallback_differences`、`summary`，以便图表层直接消费。
+  - `ReportService` 在 G 阶段仍保持只读，不得在页面层触发真实评估写入。
+- 验收标准：
+  - Dashboard Context 可稳定向六个页面注入统一依赖。
+  - `DataService` / `TraceService` / `ReportService` 的页面读取接口口径统一，且不与 F 阶段 Trace 契约冲突。
+  - 页面后续所需的数据都可通过 `core/management` 与 `report_service` 获得，不需要页面绕过服务层。
 - 测试方法：`pytest tests/integration/test_dashboard_data_access.py tests/integration/test_dashboard_system_overview.py`
 
-##### G3 实现系统总览页
+##### G3 完成 Dashboard 通用组件与共享展示契约
+
+- 目标：补齐表格、图表、Trace 时间线、状态徽标和空态渲染等共用组件，建立页面共享的展示规范，避免各页重复发明 UI 结构。
+- 前置依赖：G2。
+- 修改文件：`src/ragms/observability/dashboard/components/tables.py`、`src/ragms/observability/dashboard/components/charts.py`、`src/ragms/observability/dashboard/components/trace_timeline.py`
+- 实现类/函数：`render_table()`、`render_empty_state()`、`render_metric_cards()`、`render_duration_chart()`、`render_trace_timeline()`、`render_status_badge()`
+- 实现约束：
+  - Trace 和 provider 信息必须动态渲染，不得写死阶段名、provider 名或模型名；阶段显示以第 3.4.2 节的 schema 为唯一来源。
+  - 组件必须统一处理空态、错误态和正常态，页面不得自行拼接不一致的提示样式。
+  - `trace_timeline` 组件必须兼容 Query / Ingestion / Evaluation 三类 `trace_type`，即使 G 阶段只先消费前两类。
+- 验收标准：
+  - 共用组件可直接支撑 G4-G8 页面。
+  - `trace_timeline` 能正确显示阶段顺序、耗时、状态、输入输出摘要和错误信息。
+  - 组件在空数据、损坏 Trace、缺失可选阶段时都能稳定渲染。
+- 测试方法：`pytest tests/integration/test_dashboard_data_access.py tests/integration/test_dashboard_trace_compare.py`
+
+##### G4 实现系统总览页
 
 - 目标：提供系统整体运行面板，汇总知识库规模、组件配置摘要、最近 Trace、异常概览和关键趋势指标。
+- 前置依赖：G2，G3。
 - 修改文件：`src/ragms/observability/dashboard/pages/system_overview.py`、`src/ragms/core/management/data_service.py`、`src/ragms/core/management/trace_service.py`
 - 实现类/函数：`render_system_overview()`、`DataService.get_collection_statistics()`、`TraceService.get_recent_failures()`
-- 验收标准：页面可展示集合数、文档数、chunk 数、图片数、最近摄取/查询记录、失败统计、耗时趋势和当前组件配置摘要；当 Trace 或集合为空时能给出明确空态提示，不出现空白页。
+- 实现约束：
+  - 配置摘要必须来自统一配置对象，不允许页面直接读 `settings.yaml` 原始文件。
+  - 最近 Trace 列表必须复用 `TraceService.list_traces()` 的摘要结构，不单独解析 JSONL。
+  - 趋势图和失败概览必须对空数据场景给出明确空态，不出现空白卡片。
+- 验收标准：
+  - 页面可展示集合数、文档数、chunk 数、图片数、最近摄取/查询记录、失败统计、耗时趋势和当前组件配置摘要。
+  - 当 Trace 或集合为空时能给出明确空态提示，不出现空白页。
+  - 从总览页能跳转到相关 Trace 或数据浏览页面。
 - 测试方法：`pytest tests/integration/test_dashboard_system_overview.py`
 
-##### G4 实现数据浏览器页
+##### G5 实现数据浏览器页
 
-- 目标：提供 collection -> document -> chunk -> image 的逐层浏览和回溯能力，支撑第 3.1 节与第 3.5 节定义的文档生命周期和多模态检视需求。
+- 目标：提供 `collection -> document -> chunk -> image` 的逐层浏览和回溯能力，支撑第 3.1 节与第 3.5 节定义的文档生命周期和多模态检视需求。
+- 前置依赖：G2，G3。
 - 修改文件：`src/ragms/observability/dashboard/pages/data_browser.py`、`src/ragms/core/management/data_service.py`
 - 实现类/函数：`render_data_browser()`、`DataService.list_documents()`、`DataService.get_document_detail()`、`DataService.get_chunk_detail()`
-- 验收标准：支持按 collection、文档状态、页码、标签、关键词等条件过滤；可查看 chunk 正文、metadata、引用来源、图片预览与关联 `trace_id`；支持从文档详情跳转到相关 Ingestion Trace。
+- 实现约束：
+  - 页面必须支持 collection、文档状态、关键词等基础过滤。
+  - 文档详情必须展示与 `trace_id` 的关联，便于从数据浏览回跳到 Ingestion Trace。
+  - chunk 详情必须兼容图片预览、metadata、引用来源和分页/章节锚点，不得只展示正文。
+- 验收标准：
+  - 支持按 collection、文档状态、页码、标签、关键词等条件过滤。
+  - 可查看 chunk 正文、metadata、引用来源、图片预览与关联 `trace_id`。
+  - 支持从文档详情跳转到相关 Ingestion Trace。
 - 测试方法：`pytest tests/integration/test_dashboard_data_access.py`
-
-##### G5 实现 Ingestion 管理页
-
-- 目标：把摄取侧文档管理能力完整暴露到 UI，支持触发摄取、查看进度、识别增量跳过、删除文档和重建文档。
-- 修改文件：`src/ragms/observability/dashboard/pages/ingestion_management.py`、`src/ragms/core/management/document_admin_service.py`、`src/ragms/ingestion_pipeline/pipeline.py`
-- 实现类/函数：`render_ingestion_management()`、`DocumentAdminService.ingest_documents()`、`DocumentAdminService.delete_document()`、`DocumentAdminService.rebuild_document()`
-- 验收标准：页面可展示文档状态、最近摄取时间、失败原因、跳过原因和版本信息；触发删除或重建后状态可刷新并与 SQLite / Chroma / 图片存储保持一致；摄取执行过程中可显示阶段进度与当前状态。
-- 测试方法：`pytest tests/integration/test_dashboard_ingestion_management.py`
 
 ##### G6 实现 Ingestion 追踪页
 
 - 目标：为摄取链路提供按 `trace_id` 的完整回放能力，支持阶段时间线、摘要、错误和上下文定位。
+- 前置依赖：F3，G2，G3，G5。
 - 修改文件：`src/ragms/observability/dashboard/pages/ingestion_trace.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/observability/dashboard/components/trace_timeline.py`
-- 实现类/函数：`render_ingestion_trace()`、`TraceService.list_traces(trace_type=\"ingestion\")`、`TraceService.get_trace_detail()`
-- 验收标准：支持按时间、状态、collection、`trace_id` 过滤；页面可展示 Load、Split、Transform、Embed、Upsert 等阶段的耗时、输入输出摘要、provider、错误信息和进度；可从 trace 回跳到对应文档或源文件。
+- 实现类/函数：`render_ingestion_trace()`、`TraceService.list_traces(trace_type="ingestion")`、`TraceService.get_trace_detail()`
+- 实现约束：
+  - 页面必须完全遵循第 3.4.2 节和 F3 定义的规范阶段名：`file_integrity`、`load`、`chunking`、`transform`、`embedding`、`storage`、`lifecycle_finalize`。
+  - 不得再使用 `split`、`embed`、`upsert` 等旧别名作为页面主显示逻辑。
+  - 列表视图和详情视图都必须支持 `status`、`collection`、`trace_id` 等过滤条件。
+  - 页面必须支持从 trace 回跳到文档、源文件或数据浏览页面。
+- 验收标准：
+  - 支持按时间、状态、collection、`trace_id` 过滤。
+  - 页面可展示 `file_integrity`、`load`、`chunking`、`transform`、`embedding`、`storage`、`lifecycle_finalize` 各阶段的耗时、输入输出摘要、provider、错误信息和进度。
+  - 跳过、失败、部分成功场景在页面中可解释，不会被渲染成“缺数据”。
 - 测试方法：`pytest tests/integration/test_dashboard_ingestion_trace.py`
 
 ##### G7 实现 Query 追踪页
 
-- 目标：为查询链路提供细粒度排障视图，覆盖 Query Processing、Dense / Sparse Retrieval、Fusion、Rerank、Generation 等阶段，并支持关键 trace 对比。
+- 目标：为查询链路提供细粒度排障视图，覆盖 Query Processing、Dense / Sparse Retrieval、Fusion、Rerank、Response Build、Answer Generation 等阶段，并支持关键 trace 对比。
+- 前置依赖：F4，G2，G3。
 - 修改文件：`src/ragms/observability/dashboard/pages/query_trace.py`、`src/ragms/core/management/trace_service.py`、`src/ragms/observability/dashboard/components/charts.py`
 - 实现类/函数：`render_query_trace()`、`TraceService.compare_traces()`、`render_query_trace_comparison()`
-- 验收标准：页面可展示改写后查询、关键词、召回数量、融合结果、重排摘要、生成耗时、fallback 信息和最终引用摘要；支持选择两个 `trace_id` 做指标与阶段耗时对比；若查询未进入生成阶段，页面也能按实际阶段动态渲染。
+- 实现约束：
+  - 页面必须覆盖 F4 定义的全部规范阶段：`query_processing`、`dense_retrieval`、`sparse_retrieval`、`fusion`、`rerank`、`response_build`、`answer_generation`。
+  - 若查询未进入 `answer_generation`，页面必须按实际阶段动态渲染，而不是补空白模块。
+  - `rerank` 为可选阶段；当 backend 为 `none` 或未执行时，页面必须能区分“未启用”和“失败”。
+  - Trace 对比必须基于 `TraceService.compare_traces()`，至少比较阶段耗时、召回数量、重排差异、引用数量和 fallback 信息。
+- 验收标准：
+  - 页面可展示改写后查询、关键词、召回数量、融合结果、重排摘要、`response_build` 摘要、生成耗时、fallback 信息和最终引用摘要。
+  - 支持选择两个 `trace_id` 做指标与阶段耗时对比。
+  - 若查询未进入生成阶段，页面也能按实际阶段动态渲染。
 - 测试方法：`pytest tests/integration/test_dashboard_query_trace.py tests/integration/test_dashboard_trace_compare.py`
 
-##### G8 实现评估面板、页面联动与 Dashboard 验收
+##### G8 实现 Ingestion 管理页
+
+- 目标：把摄取侧文档管理能力完整暴露到 UI，支持上传触发摄取、查看进度、识别增量跳过、删除文档和重建文档。
+- 前置依赖：F5，G2，G3，G5。
+- 修改文件：`src/ragms/observability/dashboard/pages/ingestion_management.py`、`src/ragms/core/management/document_admin_service.py`、`tests/integration/test_dashboard_ingestion_management.py`
+- 实现类/函数：`render_ingestion_management()`、`DocumentAdminService.ingest_documents()`、`DocumentAdminService.delete_document()`、`DocumentAdminService.rebuild_document()`
+- 实现约束：
+  - Ingestion 管理页必须通过 `DocumentAdminService` 暴露管理动作，不允许页面直接操作 Pipeline、Chroma 或 BM25。
+  - 文件上传能力在 G 阶段是必做项，不是可选项；页面需要先将文件写入受控临时目录，再通过 `DocumentAdminService.ingest_documents(..., on_progress=...)` 触发摄取。
+  - `DocumentAdminService.ingest_documents()` 必须作为服务层入口收敛 collection、force、回调和错误处理，不允许页面层直接拼接 `IngestionPipeline.run(...)`。
+  - 进度展示必须消费 F5 定义的 `ProgressEvent`，并能显示当前阶段、已完成阶段数、总阶段数、状态和必要错误信息。
+- 验收标准：
+  - Ingestion 管理页可展示文档状态、最近摄取时间、失败原因、跳过原因和版本信息，并支持上传触发摄取、删除文档和重建文档。
+  - 摄取执行过程中可显示阶段进度与当前状态。
+  - 删除或重建后状态可刷新并与 SQLite / Chroma / 图片存储保持一致。
+- 测试方法：`pytest tests/integration/test_dashboard_ingestion_management.py`
+
+##### G9 实现评估面板、页面联动与 Dashboard 验收
 
 - 目标：完成评估面板页面壳、跨页面跳转与整站验收，使 Dashboard 在阶段 G 结束时已形成完整的管理闭环。该任务以“支持无报告空态、预置样例报告和本地已落盘报告的只读展示”为范围，不要求系统在本阶段已经完成真实评估执行；真实评估运行、golden baseline 建立和 `test_evaluation_visible_in_dashboard.py` 的验收继续在阶段 H 完成。
-- 修改文件：`src/ragms/observability/dashboard/pages/evaluation_panel.py`、`src/ragms/core/evaluation/report_service.py`、`tests/integration/test_dashboard_navigation.py`、`tests/e2e/test_dashboard_smoke.py`
+- 前置依赖：G4，G5，G6，G7，G8。
+- 修改文件：`src/ragms/observability/dashboard/pages/evaluation_panel.py`、`src/ragms/core/evaluation/report_service.py`、`tests/integration/test_dashboard_evaluation_panel.py`、`tests/integration/test_dashboard_navigation.py`、`tests/e2e/test_dashboard_smoke.py`
 - 实现类/函数：`render_evaluation_panel()`、`ReportService.load_report_detail()`、`resolve_dashboard_navigation_target()`
-- 验收标准：评估面板在无报告时可展示明确空态，在存在预置样例或本地已落盘报告时可展示摘要、指标概览和详情入口；系统总览、数据浏览、Ingestion 管理、Ingestion 追踪、Query 追踪、评估面板六页均可正常打开并完成关键交互；文档 -> Trace、Trace -> 文档 / chunk、评估结果 -> collection / 配置摘要等关键跳转成立；Dashboard 冒烟测试通过。
-- 测试方法：`pytest tests/integration/test_dashboard_navigation.py tests/e2e/test_dashboard_smoke.py`
+- 实现约束：
+  - 评估面板在 G 阶段只承担只读展示，不触发真实评估执行。
+  - 无报告空态、预置样例和本地已落盘报告三类场景都必须可渲染，并且页面层只通过 `ReportService` 获取数据。
+  - 页面联动必须覆盖文档 -> Trace、Trace -> 文档 / chunk、评估结果 -> collection / 配置摘要等关键跳转。
+- 验收标准：
+  - 评估面板在无报告时可展示明确空态，在存在预置样例或本地已落盘报告时可展示摘要、指标概览和详情入口。
+  - `test_dashboard_evaluation_panel.py` 能独立验证评估面板空态、样例态和报告详情入口。
+  - 系统总览、数据浏览、Ingestion 管理、Ingestion 追踪、Query 追踪、评估面板六页均可正常打开并完成关键交互。
+  - Dashboard 冒烟测试通过。
+- 测试方法：`pytest tests/integration/test_dashboard_evaluation_panel.py tests/integration/test_dashboard_navigation.py tests/e2e/test_dashboard_smoke.py`
 
 阶段 G 完成判定：
 
 - 本地执行 `scripts/run_dashboard.py` 后可稳定打开六个页面，且无外部网络依赖。
 - 所有页面仅通过 `core/management` 与 `core/evaluation/report_service.py` 访问业务数据，不在 UI 层直接操作底层存储。
 - 文档、chunk、图片、Ingestion Trace、Query Trace、评估报告之间形成可点击的双向回溯链路。
+- 评估面板具备独立页面级测试覆盖，不仅依赖导航测试或冒烟测试间接覆盖。
 - Query Trace 对比能力和跨页面跳转能力有明确测试覆盖，不依赖人工点选验证。
 - 删除、重建、摄取进度查看、Trace 过滤与对比、评估结果筛选等核心交互均可用。
-- `pytest tests/integration/test_dashboard_shell.py tests/integration/test_dashboard_system_overview.py tests/integration/test_dashboard_data_access.py tests/integration/test_dashboard_ingestion_management.py tests/integration/test_dashboard_ingestion_trace.py tests/integration/test_dashboard_query_trace.py tests/integration/test_dashboard_navigation.py tests/integration/test_dashboard_trace_compare.py tests/e2e/test_dashboard_smoke.py` 全部通过。
+- `pytest tests/integration/test_dashboard_shell.py tests/integration/test_dashboard_system_overview.py tests/integration/test_dashboard_data_access.py tests/integration/test_dashboard_ingestion_management.py tests/integration/test_dashboard_ingestion_trace.py tests/integration/test_dashboard_query_trace.py tests/integration/test_dashboard_trace_compare.py tests/integration/test_dashboard_evaluation_panel.py tests/integration/test_dashboard_navigation.py tests/e2e/test_dashboard_smoke.py` 全部通过。
 
 #### 阶段 H：评估体系
 
