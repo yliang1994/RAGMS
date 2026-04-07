@@ -4,6 +4,7 @@ from pathlib import Path
 
 from mcp import types
 
+from ragms.mcp_server.tools import query as query_tool_module
 from ragms.mcp_server.tools.query import handle_query_knowledge_hub
 from ragms.runtime.container import ServiceContainer
 from ragms.runtime.settings_models import AppSettings
@@ -77,3 +78,57 @@ def test_handle_query_knowledge_hub_returns_error_wrapper_for_failures(tmp_path:
     assert result.isError is True
     assert result.structuredContent["error"]["code"] == -32603
     assert result.content[0].text == "Internal error"
+
+
+def test_handle_query_knowledge_hub_rebinds_runtime_for_collection_override(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+    engine = StubQueryEngine(
+        {
+            "answer": "matched",
+            "markdown": "matched",
+            "structured_content": {
+                "citations": [],
+                "retrieved_chunks": [{"chunk_id": "chunk-1", "metadata": {}}],
+                "trace_id": "trace-override",
+            },
+        }
+    )
+    build_container_calls: list[str] = []
+    build_query_engine_calls: list[str] = []
+    response_builder = type(
+        "StubResponseBuilder",
+        (),
+        {
+            "build_multimodal_contents": staticmethod(
+                lambda *, markdown, retrieved_chunks: [types.TextContent(type="text", text=markdown)]
+            )
+        },
+    )()
+
+    def fake_build_container(*, settings):
+        build_container_calls.append(settings.vector_store.collection)
+        return ServiceContainer(settings=settings, services={})
+
+    def fake_build_query_engine(runtime_arg, *, settings=None):
+        build_query_engine_calls.append(runtime_arg.settings.vector_store.collection)
+        assert settings is not None
+        assert settings.vector_store.collection == "docs"
+        return engine
+
+    monkeypatch.setattr(query_tool_module, "build_container", fake_build_container)
+    monkeypatch.setattr(query_tool_module, "build_query_engine", fake_build_query_engine)
+
+    result = handle_query_knowledge_hub(
+        query="what is rag",
+        collection="docs",
+        runtime=runtime,
+        response_builder=response_builder,
+    )
+
+    assert build_container_calls == ["docs"]
+    assert build_query_engine_calls == ["docs"]
+    assert engine.calls[0]["collection"] == "docs"
+    assert result.isError is False

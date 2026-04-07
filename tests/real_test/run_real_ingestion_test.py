@@ -286,12 +286,12 @@ def inspect_artifacts(
             source_paths,
         ).fetchall()
         image_rows = connection.execute(
-            """
+            f"""
             SELECT COUNT(*) AS count
             FROM images
-            WHERE collection = ?
+            WHERE source_path IN ({placeholders})
             """,
-            (collection,),
+            source_paths,
         ).fetchone()
     finally:
         connection.close()

@@ -9,7 +9,7 @@ from mcp import types
 
 from ragms.core.query_engine import ResponseBuilder, build_query_engine
 from ragms.mcp_server.protocol_handler import ProtocolHandler
-from ragms.runtime.container import ServiceContainer
+from ragms.runtime.container import ServiceContainer, build_container
 from ragms.storage.images.image_storage import ImageStorage
 from ragms.storage.sqlite.connection import create_sqlite_connection
 from ragms.storage.sqlite.repositories.images import ImagesRepository
@@ -23,6 +23,21 @@ def _build_response_builder(runtime: ServiceContainer) -> ResponseBuilder:
         images_repository=images_repository,
         image_storage=image_storage,
     )
+
+
+def _resolve_query_runtime(
+    runtime: ServiceContainer,
+    *,
+    collection: str | None,
+) -> ServiceContainer:
+    """Return a runtime whose retrieval services are bound to the requested collection."""
+
+    if not collection or collection == runtime.settings.vector_store.collection:
+        return runtime
+
+    overridden_settings = runtime.settings.model_copy(deep=True)
+    overridden_settings.vector_store.collection = collection
+    return build_container(settings=overridden_settings)
 
 
 def handle_query_knowledge_hub(
@@ -51,8 +66,12 @@ def handle_query_knowledge_hub(
         },
     )
 
-    engine = query_engine or build_query_engine(runtime, settings=runtime.settings)
-    builder = response_builder or _build_response_builder(runtime)
+    query_runtime = runtime if query_engine is not None else _resolve_query_runtime(
+        runtime,
+        collection=request.collection,
+    )
+    engine = query_engine or build_query_engine(query_runtime, settings=query_runtime.settings)
+    builder = response_builder or _build_response_builder(query_runtime)
 
     try:
         payload = engine.run(
@@ -77,7 +96,10 @@ def handle_query_knowledge_hub(
         text=payload.get("markdown") or payload.get("answer") or "",
         structured_content=structured_content,
         debug=debug_info,
-        content=payload.get("content"),
+        content=payload.get("content") or builder.build_multimodal_contents(
+            markdown=payload.get("markdown") or payload.get("answer") or "",
+            retrieved_chunks=list(structured_content.get("retrieved_chunks") or []),
+        ),
     )
 
 
