@@ -2496,11 +2496,11 @@ dashboard:
 | 阶段 C | 17 | 17 | 100% |
 | 阶段 D | 8 | 8 | 100% |
 | 阶段 E | 9 | 9 | 100% |
-| 阶段 F | 6 | 1 | 17% |
+| 阶段 F | 6 | 2 | 33% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **55** | **67.1%** |
+| **总计** | **82** | **56** | **68.3%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -3163,7 +3163,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
 | F1 | 实现 Trace Schema、StageRecorder 与 TraceManager | [x] | 2026-04-07 | trace schema, stage recorder, and lifecycle manager tests passed |
-| F2 | 实现 JSONL 持久化、TraceRepository 与 Trace Logger | [ ] |  |  |
+| F2 | 实现 JSONL 持久化、TraceRepository 与 Trace Logger | [x] | 2026-04-07 | trace jsonl writer, repository, and formatter tests passed |
 | F3 | 为 Ingestion 打点并回传 `trace_id` | [ ] |  |  |
 | F4 | 为 Query 打点并回传 `trace_id` | [ ] |  |  |
 | F5 | 规范进度回调并实现 TraceService 读取能力 | [ ] |  |  |
