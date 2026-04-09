@@ -399,6 +399,18 @@ class DataService:
         )
         chunks = [chunk for values in collection_chunks.values() for chunk in values]
         image_rows = self.images_repository.list_by_document_id(str(document["document_id"]))
+        related_traces = self._find_related_traces(
+            document_id=str(document["document_id"]),
+            source_path=str(document["source_path"]),
+        )
+        skip_reason = next(
+            (
+                trace.get("skipped")
+                for trace in related_traces
+                if trace.get("status") == "skipped" and trace.get("skipped") not in (None, False, "")
+            ),
+            None,
+        )
         page_summary = self._build_page_summary(chunks, image_rows)
         tags = sorted(
             {
@@ -416,8 +428,10 @@ class DataService:
             "status": document.get("status"),
             "current_stage": document.get("current_stage"),
             "failure_reason": document.get("failure_reason"),
+            "skip_reason": skip_reason,
             "last_ingested_at": document.get("last_ingested_at"),
             "updated_at": document.get("updated_at"),
+            "version": document.get("version"),
             "chunk_count": len(chunks),
             "image_count": len(image_rows),
             "pages": page_summary["pages"],
@@ -514,6 +528,7 @@ class DataService:
             "started_at": trace.get("started_at"),
             "finished_at": trace.get("finished_at"),
             "duration_ms": trace.get("duration_ms"),
+            "skipped": trace.get("skipped"),
             "target_page": "ingestion_trace",
         }
 

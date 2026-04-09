@@ -103,6 +103,16 @@ class ImagesRepository:
             results.append(payload)
         return results
 
+    def delete_by_document_id(self, document_id: str) -> int:
+        """Delete all image mappings for one document id."""
+
+        result = self.connection.execute(
+            "DELETE FROM images WHERE document_id = ?",
+            (document_id,),
+        )
+        self.connection.commit()
+        return int(result.rowcount)
+
     def upsert_image(
         self,
         *,

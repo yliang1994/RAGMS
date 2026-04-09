@@ -2497,10 +2497,10 @@ dashboard:
 | 阶段 D | 8 | 8 | 100% |
 | 阶段 E | 9 | 9 | 100% |
 | 阶段 F | 6 | 6 | 100% |
-| 阶段 G | 8 | 7 | 88% |
+| 阶段 G | 8 | 8 | 100% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **67** | **81.7%** |
+| **总计** | **82** | **68** | **82.9%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -3288,7 +3288,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | G5 | 实现数据浏览器页 | [x] | 2026-04-09 | dashboard data browser delivered with filters, trace links, and chunk image preview |
 | G6 | 实现 Ingestion 追踪页 | [x] | 2026-04-09 | ingestion trace page delivered with canonical stage timeline, filters, and data-browser navigation |
 | G7 | 实现 Query 追踪页 | [x] | 2026-04-09 | query trace page delivered with timeline, dynamic stage rendering, and structured trace comparison |
-| G8 | 实现 Ingestion 管理页 | [ ] |  |  |
+| G8 | 实现 Ingestion 管理页 | [x] | 2026-04-09 | ingestion management page delivered with upload actions, progress events, and lifecycle delete/rebuild flows |
 | G9 | 实现评估面板、页面联动与 Dashboard 验收 | [ ] |  |  |
 
 ##### G1 建立 Dashboard 应用壳、页面注册与运行配置

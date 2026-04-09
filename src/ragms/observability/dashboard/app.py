@@ -8,9 +8,10 @@ from collections.abc import Sequence
 from typing import Any
 
 from ragms.core.evaluation import ReportService
-from ragms.core.management import DataService, TraceService
+from ragms.core.management import DataService, DocumentAdminService, TraceService
 from ragms.observability.dashboard.pages import (
     render_data_browser,
+    render_ingestion_management,
     render_ingestion_trace,
     render_query_trace,
     render_system_overview,
@@ -96,10 +97,7 @@ def build_dashboard_context(
     resolved_runtime = runtime or build_container(settings)
     resolved_data_service = data_service or DataService(settings)
     resolved_trace_service = trace_service or TraceService(settings)
-    resolved_document_admin = document_admin_service or resolved_runtime.services.get(
-        "document_admin_service",
-        PlaceholderService(name="document_admin_service", implementation="pending", config={}),
-    )
+    resolved_document_admin = document_admin_service or DocumentAdminService(settings)
     resolved_report_service = report_service or ReportService(settings)
     service_snapshot = {
         "data_service": resolved_data_service.__class__.__name__,
@@ -182,6 +180,8 @@ def _render_page_payload(context: DashboardContext, active_page: str) -> dict[st
         return render_system_overview(context)
     if active_page == "data_browser":
         return render_data_browser(context)
+    if active_page == "ingestion_management":
+        return render_ingestion_management(context)
     if active_page == "ingestion_trace":
         return render_ingestion_trace(context)
     if active_page == "query_trace":
@@ -200,6 +200,9 @@ def _render_page(context: DashboardContext, active_page: str, renderer: Any) -> 
         return
     if active_page == "data_browser":
         render_data_browser(context, renderer=renderer)
+        return
+    if active_page == "ingestion_management":
+        render_ingestion_management(context, renderer=renderer)
         return
     if active_page == "ingestion_trace":
         render_ingestion_trace(context, renderer=renderer)
