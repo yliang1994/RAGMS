@@ -37,9 +37,9 @@ class _StubDashboardEvalRunner:
             "path": payload["path"],
         }
 
+def assert_dashboard_regression_flow(tmp_path: Path) -> dict[str, object]:
+    """Run the final dashboard evaluation flow and return key page payloads."""
 
-@pytest.mark.e2e
-def test_evaluation_run_is_visible_and_comparable_in_dashboard(tmp_path: Path) -> None:
     settings = load_settings(_write_settings(tmp_path / "settings.yaml"))
     dataset_dir = settings.paths.data_dir / "evaluation" / "datasets" / "golden"
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -80,6 +80,26 @@ def test_evaluation_run_is_visible_and_comparable_in_dashboard(tmp_path: Path) -
         },
         run_id="dashboard-run",
     )
+    empty_root = tmp_path / "empty"
+    empty_root.mkdir(parents=True, exist_ok=True)
+    empty_settings = load_settings(_write_settings(empty_root / "settings.yaml"))
+    empty_context = build_dashboard_context(
+        empty_settings,
+        report_service=ReportService(empty_settings),
+        eval_runner=_StubDashboardEvalRunner(ReportService(empty_settings)),
+    )
+    empty_page = render_evaluation_panel(empty_context)
+    return {
+        "page": page,
+        "empty_page": empty_page,
+    }
+
+
+@pytest.mark.e2e
+def test_evaluation_run_is_visible_and_comparable_in_dashboard(tmp_path: Path) -> None:
+    payloads = assert_dashboard_regression_flow(tmp_path)
+    page = payloads["page"]
+    empty_page = payloads["empty_page"]
 
     assert page["run_state"]["status"] == "succeeded"
     assert page["selected_report"]["run_id"] == "dashboard-run"
@@ -87,3 +107,6 @@ def test_evaluation_run_is_visible_and_comparable_in_dashboard(tmp_path: Path) -
     assert page["baseline_actions"]["current_baseline"]["run_id"] == "baseline-run"
     assert page["results"]["failed_samples"]["row_count"] == 1
     assert page["results"]["provider_compare"][0]["run_id"] in {"baseline-run", "dashboard-run"}
+    assert empty_page["reports"]["kind"] == "empty"
+    assert empty_page["run_form"]["selected_dataset_name"] is None
+    assert empty_page["report_empty_state"]["title"] == "暂无报告详情"

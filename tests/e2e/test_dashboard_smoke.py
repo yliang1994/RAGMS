@@ -57,8 +57,9 @@ def _write_settings(path: Path) -> Path:
     return path
 
 
-@pytest.mark.e2e
-def test_dashboard_smoke_renders_all_g_stage_pages(tmp_path: Path) -> None:
+def dashboard_smoke_check(tmp_path: Path) -> dict[str, str]:
+    """Render all primary dashboard pages and return their page kinds."""
+
     settings_path = _write_settings(tmp_path / "settings.yaml")
     data_service, trace_service, report_service = _append_query_variants(settings_path)
     settings = load_settings(settings_path)
@@ -82,6 +83,12 @@ def test_dashboard_smoke_renders_all_g_stage_pages(tmp_path: Path) -> None:
             "evaluation_panel",
         ]
     }
+    return rendered
+
+
+@pytest.mark.e2e
+def test_dashboard_smoke_renders_all_g_stage_pages(tmp_path: Path) -> None:
+    rendered = dashboard_smoke_check(tmp_path)
 
     assert rendered == {
         "system_overview": "system_overview",
