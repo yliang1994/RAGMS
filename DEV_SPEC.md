@@ -3464,7 +3464,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | H3 | 实现确定性指标与固定阈值回归测试 | [x] | 2026-04-09 | deterministic retrieval and answer metrics with fixed recall regression thresholds added for evaluation gating |
 | H4 | 实现 `RagasEvaluator`、`DeepEvalEvaluator` 与后端适配层 | [x] | 2026-04-09 | ragas and deepeval adapters normalized backend status, metric payloads, and predictable skip behavior |
 | H5 | 实现 `CompositeEvaluator`、工厂装配与配置切换 | [x] | 2026-04-09 | composite evaluator stack, backend resolution, and config-driven evaluation ordering implemented |
-| H6 | 实现 `EvalRunner`、`EvaluationTrace` 与报告持久化 | [ ] |  |  |
+| H6 | 实现 `EvalRunner`、`EvaluationTrace` 与报告持久化 | [x] | 2026-04-09 | evaluation runner, evaluation trace logging, sqlite report persistence, and dashboard-readable report detail flows passed |
 | H7 | 实现 baseline 管理与稳定对比契约 | [ ] |  |  |
 | H8 | 打通 Dashboard 评估工作台与真实运行入口 | [ ] |  |  |
 | H9 | 接入 `evaluate_collection` MCP Tool | [ ] |  |  |

@@ -212,6 +212,9 @@ class TraceService:
         for field in ("query", "source_path", "document_id", "total_chunks", "total_images", "skipped"):
             if field in trace:
                 summary[field] = trace.get(field)
+        for field in ("run_id", "dataset_version", "backends", "metrics_summary", "quality_gate_status"):
+            if field in trace:
+                summary[field] = trace.get(field)
         return summary
 
     @staticmethod

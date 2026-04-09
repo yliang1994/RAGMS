@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from typing import Any
+from typing import Any, Callable
 import uuid
 
 from ragms.runtime.exceptions import RagMSError
@@ -172,3 +172,47 @@ class TraceManager:
         if error is not None:
             return "failed" if status is None else status
         return "succeeded" if status is None else status
+
+
+def record_evaluation_trace(
+    trace_manager: TraceManager,
+    trace: BaseTrace,
+    *,
+    stage_name: str,
+    input_payload: Any = None,
+    metadata: dict[str, Any] | None = None,
+    operation: Callable[[], Any],
+    output_builder: Callable[[Any], Any] | None = None,
+    metadata_builder: Callable[[Any], dict[str, Any]] | None = None,
+) -> Any:
+    """Execute one evaluation stage and persist its trace payload."""
+
+    trace_manager.start_stage(
+        trace,
+        stage_name,
+        input_payload=input_payload,
+        metadata=metadata,
+    )
+    try:
+        result = operation()
+    except Exception as exc:
+        trace_manager.finish_stage(
+            trace,
+            stage_name,
+            status="failed",
+            output_payload=None,
+            metadata=metadata,
+            error=exc,
+        )
+        raise
+
+    stage_metadata = dict(metadata or {})
+    if metadata_builder is not None:
+        stage_metadata.update(metadata_builder(result))
+    trace_manager.finish_stage(
+        trace,
+        stage_name,
+        output_payload=result if output_builder is None else output_builder(result),
+        metadata=stage_metadata,
+    )
+    return result
