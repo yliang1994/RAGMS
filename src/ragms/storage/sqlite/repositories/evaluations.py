@@ -7,6 +7,8 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from ragms.core.models import build_baseline_scope, normalize_backend_set
+
 
 class EvaluationRepository:
     """Store and query evaluation run summaries in SQLite."""
@@ -24,6 +26,13 @@ class EvaluationRepository:
 
         timestamp = _utc_now()
         stored_report_path = str(report_path or payload.get("artifacts", {}).get("report_path") or payload.get("path") or "")
+        baseline_scope = str(payload.get("baseline_scope") or "").strip()
+        if not baseline_scope:
+            baseline_scope = build_baseline_scope(
+                collection=str(payload["collection"]),
+                dataset_version=payload.get("dataset_version"),
+                backend_set=payload.get("backend_set") or [],
+            )
         self.connection.execute(
             """
             INSERT INTO evaluations (
@@ -67,7 +76,7 @@ class EvaluationRepository:
                 payload.get("dataset_name"),
                 payload.get("dataset_version"),
                 _json_dump(payload.get("backend_set") or []),
-                payload.get("baseline_scope"),
+                baseline_scope,
                 _json_dump(payload.get("config_snapshot") or {}),
                 _json_dump(payload.get("aggregate_metrics") or {}),
                 payload.get("quality_gate_status"),
@@ -114,6 +123,16 @@ class EvaluationRepository:
         )
         return None if row is None else self._decode_row(dict(row))
 
+    def get_baseline(self, scope: str) -> dict[str, Any] | None:
+        """Return the active baseline row for one scope."""
+
+        for row in self.list_runs():
+            if row.get("baseline_scope") != scope:
+                continue
+            if bool((row.get("artifacts") or {}).get("is_baseline")):
+                return row
+        return None
+
     def list_runs(self, *, limit: int | None = None) -> list[dict[str, Any]]:
         """List persisted evaluation runs ordered by recency."""
 
@@ -143,6 +162,44 @@ class EvaluationRepository:
         rows = self._safe_fetchall(query, ())
         return [self._decode_row(dict(row)) for row in rows]
 
+    def save_baseline_binding(self, scope: str, run_id: str | None) -> dict[str, Any]:
+        """Activate one baseline binding for a scope or clear it."""
+
+        rows = self._safe_fetchall(
+            """
+            SELECT run_id, artifacts
+            FROM evaluations
+            WHERE baseline_scope = ?
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            (scope,),
+        )
+        if run_id is not None and not any(str(row["run_id"]) == str(run_id) for row in rows):
+            raise KeyError(f"Unknown baseline run for scope {scope}: {run_id}")
+
+        timestamp = _utc_now()
+        for row in rows:
+            artifacts = _json_load(row["artifacts"], {})
+            artifacts["is_baseline"] = run_id is not None and str(row["run_id"]) == str(run_id)
+            self.connection.execute(
+                """
+                UPDATE evaluations
+                SET artifacts = ?, updated_at = ?
+                WHERE run_id = ?
+                """,
+                (
+                    _json_dump(artifacts),
+                    timestamp,
+                    str(row["run_id"]),
+                ),
+            )
+        self.connection.commit()
+        return {
+            "scope": scope,
+            "run_id": run_id,
+            "cleared": run_id is None,
+        }
+
     def _safe_fetchone(self, query: str, parameters: tuple[Any, ...]) -> sqlite3.Row | None:
         try:
             return self.connection.execute(query, parameters).fetchone()
@@ -162,9 +219,11 @@ class EvaluationRepository:
     @staticmethod
     def _decode_row(row: dict[str, Any]) -> dict[str, Any]:
         row["backend_set"] = _json_load(row.get("backend_set"), [])
+        row["backend_set"] = normalize_backend_set(row["backend_set"])
         row["config_snapshot"] = _json_load(row.get("config_snapshot"), {})
         row["aggregate_metrics"] = _json_load(row.get("aggregate_metrics"), {})
         row["artifacts"] = _json_load(row.get("artifacts"), {})
+        row["is_baseline"] = bool(row["artifacts"].get("is_baseline"))
         return row
 
 

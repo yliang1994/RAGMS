@@ -14,6 +14,40 @@ class EvaluationModelError(RagMSError):
     """Raised when evaluation sample or report payloads are invalid."""
 
 
+def normalize_backend_set(backends: list[str] | tuple[str, ...] | None) -> list[str]:
+    """Return normalized backend names with order-preserving de-duplication."""
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for backend in backends or []:
+        normalized = str(backend).strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        resolved.append(normalized)
+    return resolved
+
+
+def build_baseline_scope(
+    *,
+    collection: str,
+    dataset_version: str | None,
+    backend_set: list[str] | tuple[str, ...] | None,
+) -> str:
+    """Build the canonical baseline scope key."""
+
+    normalized_collection = str(collection).strip()
+    normalized_version = str(dataset_version or "").strip()
+    if not normalized_collection:
+        raise EvaluationModelError("collection must not be empty")
+    if not normalized_version:
+        raise EvaluationModelError("dataset_version must not be empty")
+    normalized_backends = normalize_backend_set(backend_set)
+    if not normalized_backends:
+        raise EvaluationModelError("backend_set must not be empty")
+    return f"{normalized_collection}::{normalized_version}::{'|'.join(normalized_backends)}"
+
+
 @dataclass(frozen=True)
 class EvaluationSample:
     """Normalized one-sample evaluation input and output payload."""
@@ -110,6 +144,13 @@ class EvaluationRunSummary:
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe report summary payload."""
 
+        baseline_scope = self.baseline_scope
+        if not baseline_scope and self.dataset_version and self.backend_set:
+            baseline_scope = build_baseline_scope(
+                collection=self.collection,
+                dataset_version=self.dataset_version,
+                backend_set=self.backend_set,
+            )
         return {
             "run_id": self.run_id,
             "trace_id": self.trace_id,
@@ -117,7 +158,7 @@ class EvaluationRunSummary:
             "dataset_name": self.dataset_name,
             "dataset_version": self.dataset_version,
             "backend_set": list(self.backend_set),
-            "baseline_scope": self.baseline_scope,
+            "baseline_scope": baseline_scope,
             "config_snapshot": dict(self.config_snapshot),
             "started_at": self.started_at,
             "finished_at": self.finished_at,

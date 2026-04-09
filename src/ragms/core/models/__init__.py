@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from .chunk import Chunk
 from .evaluation import (
+    build_baseline_scope,
+    normalize_backend_set,
     EvaluationModelError,
     EvaluationRunSummary,
     EvaluationSample,
@@ -15,6 +17,8 @@ from .response import QueryResponsePayload
 
 __all__ = [
     "Chunk",
+    "build_baseline_scope",
+    "normalize_backend_set",
     "EvaluationModelError",
     "EvaluationRunSummary",
     "EvaluationSample",
