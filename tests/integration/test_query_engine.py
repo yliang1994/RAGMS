@@ -130,6 +130,8 @@ def _build_runtime(tmp_path: Path, *, reranker_provider, llm: FakeLLM) -> tuple[
     settings.retrieval.rerank_backend = "llm_reranker" if reranker_provider else "disabled"
     settings.paths.data_dir.mkdir(parents=True, exist_ok=True)
     settings.paths.logs_dir.mkdir(parents=True, exist_ok=True)
+    settings.observability.log_file = settings.paths.logs_dir / "traces.jsonl"
+    settings.dashboard.traces_file = settings.paths.logs_dir / "traces.jsonl"
 
     embedding = QueryAwareEmbedding()
     vector_store = FilterableVectorStore()

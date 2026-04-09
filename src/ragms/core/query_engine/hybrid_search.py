@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Callable
 
 from ragms.core.models import HybridSearchResult, RetrievalCandidate
 from ragms.core.query_engine.query_processor import ProcessedQuery
@@ -39,6 +39,17 @@ class HybridSearch:
     def search(self, processed_query: ProcessedQuery) -> HybridSearchResult:
         """Run dense and sparse retrieval in parallel and return fused candidates."""
 
+        result, _ = self.search_with_trace(processed_query)
+        return result
+
+    def search_with_trace(
+        self,
+        processed_query: ProcessedQuery,
+        *,
+        stage_callback: Callable[[str, Any, Any, dict[str, Any]], None] | None = None,
+    ) -> tuple[HybridSearchResult, dict[str, Any]]:
+        """Run hybrid search and expose per-stage summaries for tracing."""
+
         dense_candidates, sparse_candidates = self._retrieve_candidates(processed_query)
         dense_filtered, dense_removed = self._apply_post_filters(
             dense_candidates,
@@ -58,8 +69,68 @@ class HybridSearch:
             post_filters=processed_query.post_filters,
         )
         truncated_candidates = tuple(fused_filtered[: self.candidate_top_n])
+        trace_payload = {
+            "dense_retrieval": {
+                "input": {
+                    "query": processed_query.dense_query,
+                    "filters": dict(processed_query.pre_filters),
+                    "top_k": processed_query.top_k,
+                },
+                "output": {
+                    "retrieved_count": len(dense_filtered),
+                    "removed_count": dense_removed,
+                    "top_chunk_ids": [candidate.chunk_id for candidate in dense_filtered[: processed_query.top_k]],
+                },
+                "metadata": {
+                    "provider": getattr(self.dense_retriever.vector_store, "implementation", self.dense_retriever.vector_store.__class__.__name__),
+                    "retry_count": 0,
+                },
+            },
+            "sparse_retrieval": {
+                "input": {
+                    "terms": list(processed_query.sparse_terms),
+                    "filters": dict(processed_query.pre_filters),
+                    "top_k": processed_query.top_k,
+                },
+                "output": {
+                    "retrieved_count": len(sparse_filtered),
+                    "removed_count": sparse_removed,
+                    "top_chunk_ids": [candidate.chunk_id for candidate in sparse_filtered[: processed_query.top_k]],
+                },
+                "metadata": {
+                    "method": "bm25",
+                    "retry_count": 0,
+                },
+            },
+            "fusion": {
+                "input": {
+                    "dense_count": len(dense_filtered),
+                    "sparse_count": len(sparse_filtered),
+                },
+                "output": {
+                    "fused_count": len(fused_filtered),
+                    "returned_count": len(truncated_candidates),
+                    "top_chunk_ids": [candidate.chunk_id for candidate in truncated_candidates],
+                },
+                "metadata": {
+                    "method": "rrf",
+                    "rrf_k": self.rrf_k,
+                    "candidate_top_n": self.candidate_top_n,
+                    "removed_count": fused_removed,
+                },
+            },
+        }
+        if stage_callback is not None:
+            for stage_name in ("dense_retrieval", "sparse_retrieval", "fusion"):
+                payload = trace_payload[stage_name]
+                stage_callback(
+                    stage_name,
+                    payload["input"],
+                    payload["output"],
+                    payload["metadata"],
+                )
 
-        return HybridSearchResult(
+        result = HybridSearchResult(
             query=processed_query.normalized_query,
             collection=processed_query.collection,
             candidates=truncated_candidates,
@@ -97,6 +168,7 @@ class HybridSearch:
                 },
             },
         )
+        return result, trace_payload
 
     def _retrieve_candidates(
         self,

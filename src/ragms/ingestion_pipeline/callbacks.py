@@ -45,6 +45,8 @@ class ProgressEvent:
     total_stages: int
     current_stage: str
     status: str
+    elapsed_ms: float = 0.0
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

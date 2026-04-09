@@ -37,21 +37,15 @@ class ResponseBuilder:
     ) -> dict[str, Any]:
         """Return a stable response payload."""
 
-        citation_indexes = {
-            citation["chunk_id"]: citation["index"]
-            for citation in citations
-        }
+        retrieved_chunks = self.serialize_retrieved_chunks(
+            retrieved_candidates,
+            citations=citations,
+        )
         payload = {
             "query": query,
             "answer": answer,
             "citations": citations,
-            "retrieved_chunks": [
-                self._serialize_candidate(
-                    candidate,
-                    citation_index=citation_indexes.get(candidate.chunk_id),
-                )
-                for candidate in retrieved_candidates
-            ],
+            "retrieved_chunks": retrieved_chunks,
             "trace_id": None if trace_context is None else trace_context.get("trace_id"),
             "fallback_applied": result.fallback_applied,
             "fallback_reason": result.fallback_reason,
@@ -79,6 +73,26 @@ class ResponseBuilder:
         if return_debug:
             payload["debug_info"] = dict(result.debug_info)
         return payload
+
+    def serialize_retrieved_chunks(
+        self,
+        retrieved_candidates: list[RetrievalCandidate],
+        *,
+        citations: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Serialize retrieved candidates with citation indexes for response reuse."""
+
+        citation_indexes = {
+            citation["chunk_id"]: citation["index"]
+            for citation in citations
+        }
+        return [
+            self._serialize_candidate(
+                candidate,
+                citation_index=citation_indexes.get(candidate.chunk_id),
+            )
+            for candidate in retrieved_candidates
+        ]
 
     def build_query_structured_content(
         self,

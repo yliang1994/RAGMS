@@ -26,6 +26,7 @@ from ragms.runtime.container import build_container
 from ragms.runtime.settings_models import AppSettings, LLMOverrideSettings
 from ragms.storage.images import ImageStorage
 from ragms.storage.indexes import BM25Indexer
+from ragms.storage.traces import TraceRepository
 from ragms.storage.sqlite.repositories import (
     DocumentsRepository,
     ImagesRepository,
@@ -149,6 +150,7 @@ def build_ingestion_pipeline(
             repository=images_repository,
             collection=collection_name,
         ),
+        trace_repository=TraceRepository(resolved_settings.observability.log_file),
     )
 
 

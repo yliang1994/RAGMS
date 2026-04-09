@@ -255,7 +255,7 @@ def test_ingestion_pipeline_runs_all_stages_with_trace_context_and_lifecycle(tmp
         source_path=str(source),
         source_sha256="sha-success",
     )
-    assert result["current_stage"] == "lifecycle"
+    assert result["current_stage"] == "lifecycle_finalize"
     assert len(result["documents"]) == 1
     assert len(result["chunks"]) == 1
     assert len(result["smart_chunks"]) == 1
@@ -274,18 +274,21 @@ def test_ingestion_pipeline_runs_all_stages_with_trace_context_and_lifecycle(tmp
     assert [event.stage for event in callback.starts] == [
         "file_integrity",
         "load",
-        "split",
+        "chunking",
         "transform",
-        "embed",
-        "store",
-        "lifecycle",
+        "embedding",
+        "storage",
+        "lifecycle_finalize",
     ]
     assert [event.status for event in callback.ends] == ["completed"] * 7
     assert callback.ends[0].payload["source_sha256"] == "sha-success"
     assert callback.ends[-1].payload["final_status"] == "indexed"
-    assert callback.progress[-1].current_stage == "lifecycle"
+    assert callback.progress[0].current_stage == "pipeline_start"
+    assert callback.progress[0].elapsed_ms == 0.0
+    assert callback.progress[-1].current_stage == "lifecycle_finalize"
     assert callback.progress[-1].status == "completed"
     assert callback.progress[-1].completed_stages == 7
+    assert callback.progress[-1].metadata["collection"] is None
     assert callback.errors == []
     assert registry.register_calls[0]["status"] == "pending"
     assert registry.update_calls == [
@@ -297,7 +300,7 @@ def test_ingestion_pipeline_runs_all_stages_with_trace_context_and_lifecycle(tmp
         {
             "document_id": result["document_id"],
             "status": "indexed",
-            "current_stage": "lifecycle",
+            "current_stage": "lifecycle_finalize",
         },
     ]
 
@@ -328,24 +331,24 @@ def test_ingestion_pipeline_emits_error_and_marks_lifecycle_failed(tmp_path: Pat
     assert len(result["documents"]) == 1
     assert len(result["chunks"]) == 1
     assert result["smart_chunks"] == []
-    assert result["current_stage"] == "lifecycle"
+    assert result["current_stage"] == "lifecycle_finalize"
     assert result["lifecycle"]["registry_status"] == "failed"
     assert [event.stage for event in callback.starts] == [
         "file_integrity",
         "load",
-        "split",
+        "chunking",
         "transform",
-        "lifecycle",
+        "lifecycle_finalize",
     ]
     assert callback.ends[-2].stage == "transform"
     assert callback.ends[-2].status == "failed"
-    assert callback.ends[-1].stage == "lifecycle"
+    assert callback.ends[-1].stage == "lifecycle_finalize"
     assert callback.ends[-1].status == "completed"
     assert callback.errors[-1].stage == "transform"
     assert callback.errors[-1].error == {"type": "ValueError", "message": "transform blew up"}
     assert callback.progress[-2].current_stage == "transform"
     assert callback.progress[-2].status == "failed"
-    assert callback.progress[-1].current_stage == "lifecycle"
+    assert callback.progress[-1].current_stage == "lifecycle_finalize"
     assert callback.progress[-1].status == "failed"
     assert registry.update_calls == [
         {
@@ -356,7 +359,7 @@ def test_ingestion_pipeline_emits_error_and_marks_lifecycle_failed(tmp_path: Pat
         {
             "document_id": result["document_id"],
             "status": "failed",
-            "current_stage": "lifecycle",
+            "current_stage": "lifecycle_finalize",
         },
     ]
 
@@ -390,9 +393,9 @@ def test_ingestion_pipeline_short_circuits_to_skipped_lifecycle_when_integrity_h
     assert result["stored_ids"] == []
     assert result["lifecycle"]["registry_status"] == "skipped"
     assert loader.calls == []
-    assert [event.stage for event in callback.starts] == ["file_integrity", "lifecycle"]
+    assert [event.stage for event in callback.starts] == ["file_integrity", "lifecycle_finalize"]
     assert [event.status for event in callback.ends] == ["completed", "completed"]
-    assert callback.progress[-1].current_stage == "lifecycle"
+    assert callback.progress[-1].current_stage == "lifecycle_finalize"
     assert callback.progress[-1].status == "skipped"
     assert callback.progress[-1].completed_stages == 2
     assert callback.errors == []
@@ -400,6 +403,6 @@ def test_ingestion_pipeline_short_circuits_to_skipped_lifecycle_when_integrity_h
         {
             "document_id": result["document_id"],
             "status": "skipped",
-            "current_stage": "lifecycle",
+            "current_stage": "lifecycle_finalize",
         }
     ]
