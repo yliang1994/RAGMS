@@ -126,7 +126,7 @@ def test_ingest_documents_cli_supports_batch_skip_and_force(
     assert first_rc == 0
     assert second_rc == 0
     assert third_rc == 0
-    assert "stage=store status=completed" in first_output
+    assert "stage=lifecycle_finalize status=completed" in first_output
     assert first_output.count("status=indexed") == 2
     assert second_output.count("status=skipped") == 2
     assert third_output.count("status=indexed") == 2

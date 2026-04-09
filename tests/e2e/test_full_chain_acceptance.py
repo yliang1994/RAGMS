@@ -19,6 +19,9 @@ def test_full_chain_acceptance_returns_structured_summary(tmp_path: Path) -> Non
     assert payload["trace_ids"]
     assert payload["run_ids"]
     assert payload["artifact_paths"]
+    assert payload["release_checklist"]["version"] == "1.0.0"
+    assert payload["release_checklist"]["frozen_baseline"]["run_id"] == "baseline-run"
+    assert payload["release_checklist"]["coverage"]["command"].startswith("pytest --cov=src/ragms")
     assert payload["scenarios"]["scenario_1_data_preparation"]["status"] == "passed"
     assert payload["scenarios"]["scenario_2_recall_quality_evaluation"]["status"] == "passed"
     assert payload["scenarios"]["scenario_3_mcp_client_function"]["status"] == "passed"

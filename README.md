@@ -1,5 +1,7 @@
 # RagServer
 
+当前冻结交付版本：`1.0.0`
+
 RagServer 是一个本地优先的 RAG 系统，包含：
 
 - 文档摄取与元数据/图片持久化
@@ -211,3 +213,31 @@ python -m pip install streamlit
 - 真实 provider 评估效果依赖外部模型与数据集质量
 - Dashboard 当前是 Streamlit 壳，不是多用户部署方案
 - Acceptance 脚本输出的是交付前本地摘要，不是长期任务编排器
+
+## 11. 交付清单
+
+正式交付检查以 `python scripts/run_acceptance.py` 的 JSON 输出为准，输出里会包含 `release_checklist`。当前冻结 baseline：
+
+- `run_id`: `baseline-run`
+- `collection`: `dashboard-demo`
+- `dataset_version`: `v1`
+- `backend_set`: `["custom_metrics"]`
+- `generated_at`: `2026-04-09`
+
+发布前需要至少确认：
+
+- 版本号：`1.0.0`
+- 一键验收：`python scripts/run_acceptance.py`
+- 覆盖率命令：`pytest --cov=src/ragms --cov-report=term-missing tests/unit tests/integration tests/e2e`
+- 关键能力：摄取、查询、MCP、Trace、Dashboard、Evaluation、baseline 对比、acceptance summary
+- 限制说明：见第 10 节
+
+覆盖率结果以最终 `pytest --cov` 输出为准；关键集成路径和三条核心 E2E 场景要求都已纳入最终回归清单。
+
+本次正式冻结的覆盖率结果：
+
+- 命令：`pytest --cov=src/ragms --cov-report=term-missing tests/unit tests/integration tests/e2e`
+- 结果：`433 passed`
+- `TOTAL` 行覆盖率：`88%`
+- 核心门槛结论：核心单元逻辑 `>= 80%`、关键集成路径 `100%`、三条核心 E2E 场景 `100%`
+- 非阻塞 warning：`jieba/pkg_resources` 与若干 `sqlite3 ResourceWarning`

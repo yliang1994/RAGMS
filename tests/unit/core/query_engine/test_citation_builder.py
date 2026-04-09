@@ -21,6 +21,7 @@ def test_citation_builder_numbers_candidates_and_preserves_source_details() -> N
 
     assert citations == [
         {
+            "citation_id": "chunk-1:1",
             "index": 1,
             "marker": "[1]",
             "chunk_id": "chunk-1",

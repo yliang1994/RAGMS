@@ -82,7 +82,7 @@ class HybridSearch:
                     "top_chunk_ids": [candidate.chunk_id for candidate in dense_filtered[: processed_query.top_k]],
                 },
                 "metadata": {
-                    "provider": getattr(self.dense_retriever.vector_store, "implementation", self.dense_retriever.vector_store.__class__.__name__),
+                    "provider": self._dense_provider_name(),
                     "retry_count": 0,
                 },
             },
@@ -199,6 +199,16 @@ class HybridSearch:
             else:
                 removed += 1
         return filtered, removed
+
+    def _dense_provider_name(self) -> str:
+        """Return a stable dense provider label even for lightweight test doubles."""
+
+        vector_store = getattr(self.dense_retriever, "vector_store", None)
+        if vector_store is None:
+            return self.dense_retriever.__class__.__name__
+        return str(
+            getattr(vector_store, "implementation", vector_store.__class__.__name__)
+        )
 
     def _matches_post_filters(
         self,
