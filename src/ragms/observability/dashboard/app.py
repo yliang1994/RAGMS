@@ -9,6 +9,7 @@ from typing import Any
 
 from ragms.core.evaluation import ReportService
 from ragms.core.management import DataService, TraceService
+from ragms.observability.dashboard.pages import render_system_overview
 from ragms.runtime.container import PlaceholderService, ServiceContainer, build_container
 from ragms.runtime.config import load_settings
 from ragms.runtime.settings_models import AppSettings
@@ -43,6 +44,7 @@ PAGE_REGISTRY = [
         key="system_overview",
         title="系统总览",
         description="系统指标、最近 trace 和组件配置摘要。",
+        status="ready",
     ),
     DashboardPage(
         key="data_browser",
@@ -134,6 +136,7 @@ def render_app_shell(
             "description": page.description,
             "status": page.status,
         },
+        "page": _render_page_payload(context, active_page),
     }
     if renderer is None:
         return shell_payload
@@ -153,17 +156,37 @@ def render_app_shell(
         index=page_keys.index(active_page),
         format_func=lambda key: next(item.title for item in context.pages if item.key == key),
     )
-    if chosen_page != active_page:
-        shell_payload["selected_page"] = chosen_page
-        page = next(item for item in context.pages if item.key == chosen_page)
-        shell_payload["placeholder"] = {
-            "title": page.title,
-            "description": page.description,
-            "status": page.status,
-        }
-    renderer.subheader(shell_payload["placeholder"]["title"])
-    renderer.info(shell_payload["placeholder"]["description"])
+    active_page = chosen_page
+    page = next(item for item in context.pages if item.key == active_page)
+    shell_payload["selected_page"] = active_page
+    shell_payload["placeholder"] = {
+        "title": page.title,
+        "description": page.description,
+        "status": page.status,
+    }
+    shell_payload["page"] = _render_page_payload(context, active_page)
+    _render_page(context, active_page, renderer)
     return shell_payload
+
+
+def _render_page_payload(context: DashboardContext, active_page: str) -> dict[str, Any]:
+    if active_page == "system_overview":
+        return render_system_overview(context)
+    return {
+        "kind": "placeholder",
+        "title": next(page.title for page in context.pages if page.key == active_page),
+        "description": next(page.description for page in context.pages if page.key == active_page),
+        "status": next(page.status for page in context.pages if page.key == active_page),
+    }
+
+
+def _render_page(context: DashboardContext, active_page: str, renderer: Any) -> None:
+    if active_page == "system_overview":
+        render_system_overview(context, renderer=renderer)
+        return
+    placeholder = _render_page_payload(context, active_page)
+    renderer.subheader(placeholder["title"])
+    renderer.info(placeholder["description"])
 
 
 def main(argv: Sequence[str] | None = None) -> int:

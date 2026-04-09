@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from ragms.core.evaluation import ReportService
+from ragms.core.management import DataService, TraceService
 from ragms.observability.dashboard import build_dashboard_context, render_app_shell
 from ragms.runtime.config import load_settings
 from tests.integration.test_dashboard_data_access import _seed_metadata
@@ -72,7 +74,33 @@ def test_dashboard_context_exposes_system_overview_ready_services(tmp_path: Path
     evaluation_runs = context.report_service.list_evaluation_runs(limit=5)
 
     assert shell["selected_page"] == "system_overview"
+    assert shell["page"]["kind"] == "system_overview"
+    assert shell["page"]["metric_cards"][0]["value"] >= 1
+    assert shell["page"]["recent_query_traces"]["row_count"] == 2
+    assert shell["page"]["recent_failures"]["rows"][0]["trace_id"] == "trace-right"
+    assert shell["page"]["duration_trend"]["point_count"] == 2
+    assert shell["page"]["navigation"][0]["target_page"] == "data_browser"
     assert shell["service_snapshot"]["report_service"] == "ReportService"
     assert metrics["config_summary"]["default_collection"] == "dashboard-demo"
     assert recent_failures[0]["trace_id"] == "trace-right"
     assert evaluation_runs[0]["collection"] == "dashboard-demo"
+
+
+@pytest.mark.integration
+def test_dashboard_system_overview_renders_empty_states_without_trace_data(tmp_path: Path) -> None:
+    settings_path = _write_settings(tmp_path / "settings.yaml")
+    settings = load_settings(settings_path)
+    context = build_dashboard_context(
+        settings,
+        data_service=DataService(settings),
+        trace_service=TraceService(settings),
+        report_service=ReportService(settings),
+    )
+
+    shell = render_app_shell(context, selected_page="system_overview")
+
+    assert shell["page"]["kind"] == "system_overview"
+    assert shell["page"]["recent_traces"]["kind"] == "empty"
+    assert shell["page"]["recent_failures"]["kind"] == "empty"
+    assert shell["page"]["duration_trend"]["point_count"] == 0
+    assert shell["page"]["duration_trend_empty_state"]["title"] == "暂无耗时趋势"

@@ -82,8 +82,15 @@ class TraceService:
             status="partial_success",
             limit=limit,
         )
-        merged = failed + partial
-        merged.sort(key=lambda item: str(item.get("started_at") or ""), reverse=True)
+        merged_by_id: dict[str, dict[str, Any]] = {}
+        for trace in failed + partial:
+            trace_id = str(trace.get("trace_id") or f"trace-{len(merged_by_id)}")
+            merged_by_id[trace_id] = trace
+        merged = sorted(
+            merged_by_id.values(),
+            key=lambda item: str(item.get("finished_at") or item.get("started_at") or ""),
+            reverse=True,
+        )
         return [self.summarize_trace(trace) for trace in merged[:limit]]
 
     def compare_traces(self, left_trace_id: str, right_trace_id: str) -> dict[str, Any]:

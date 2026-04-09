@@ -113,13 +113,13 @@ class DataService:
     def get_system_overview_metrics(self) -> dict[str, Any]:
         """Return dashboard-friendly aggregate metrics sourced from local persisted data."""
 
-        collection_payload = self.list_collections()
-        collections = list(collection_payload.get("collections") or [])
+        collection_statistics = self.get_collection_statistics()
+        collections = list(collection_statistics.get("collections") or [])
         document_rows = self._list_all_documents()
 
         total_documents = len({str(row["document_id"]) for row in document_rows})
-        total_chunks = sum(int(item.get("chunk_count") or 0) for item in collections)
-        total_images = sum(int(item.get("image_count") or 0) for item in collections)
+        total_chunks = int(collection_statistics.get("chunk_count") or 0)
+        total_images = int(collection_statistics.get("image_count") or 0)
         status_counts: dict[str, int] = {}
         for row in document_rows:
             status = str(row.get("status") or "unknown")
@@ -141,7 +141,7 @@ class DataService:
             )[:5]
         ]
         return {
-            "collection_count": len(collections),
+            "collection_count": int(collection_statistics.get("collection_count") or 0),
             "document_count": total_documents,
             "chunk_count": total_chunks,
             "image_count": total_images,
@@ -154,6 +154,19 @@ class DataService:
                 "rerank_backend": self.settings.retrieval.rerank_backend,
                 "trace_log_file": str(self.settings.dashboard.traces_file),
             },
+        }
+
+    def get_collection_statistics(self) -> dict[str, Any]:
+        """Return collection-level aggregate statistics for dashboard overview pages."""
+
+        collection_payload = self.list_collections()
+        collections = list(collection_payload.get("collections") or [])
+        return {
+            "collection_count": len(collections),
+            "document_count": sum(int(item.get("document_count") or 0) for item in collections),
+            "chunk_count": sum(int(item.get("chunk_count") or 0) for item in collections),
+            "image_count": sum(int(item.get("image_count") or 0) for item in collections),
+            "collections": collections,
         }
 
     def _discover_collection_names(self) -> set[str]:
