@@ -9,7 +9,11 @@ from typing import Any
 
 from ragms.core.evaluation import ReportService
 from ragms.core.management import DataService, TraceService
-from ragms.observability.dashboard.pages import render_data_browser, render_system_overview
+from ragms.observability.dashboard.pages import (
+    render_data_browser,
+    render_ingestion_trace,
+    render_system_overview,
+)
 from ragms.runtime.container import PlaceholderService, ServiceContainer, build_container
 from ragms.runtime.config import load_settings
 from ragms.runtime.settings_models import AppSettings
@@ -61,6 +65,7 @@ PAGE_REGISTRY = [
         key="ingestion_trace",
         title="Ingestion追踪",
         description="按 trace_id 查看摄取链路详情。",
+        status="ready",
     ),
     DashboardPage(
         key="query_trace",
@@ -175,6 +180,8 @@ def _render_page_payload(context: DashboardContext, active_page: str) -> dict[st
         return render_system_overview(context)
     if active_page == "data_browser":
         return render_data_browser(context)
+    if active_page == "ingestion_trace":
+        return render_ingestion_trace(context)
     return {
         "kind": "placeholder",
         "title": next(page.title for page in context.pages if page.key == active_page),
@@ -189,6 +196,9 @@ def _render_page(context: DashboardContext, active_page: str, renderer: Any) -> 
         return
     if active_page == "data_browser":
         render_data_browser(context, renderer=renderer)
+        return
+    if active_page == "ingestion_trace":
+        render_ingestion_trace(context, renderer=renderer)
         return
     placeholder = _render_page_payload(context, active_page)
     renderer.subheader(placeholder["title"])

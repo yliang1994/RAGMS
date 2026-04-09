@@ -10,6 +10,12 @@ from ragms.runtime.exceptions import RagMSError
 from ragms.runtime.settings_models import AppSettings
 from ragms.storage.traces import TraceRepository
 
+INGESTION_STAGE_ALIASES = {
+    "split": "chunking",
+    "embed": "embedding",
+    "upsert": "storage",
+}
+
 
 class TraceNotFoundError(RagMSError):
     """Raised when a requested trace detail cannot be found."""
@@ -44,6 +50,7 @@ class TraceService:
         trace_type: str | None = None,
         status: str | None = None,
         collection: str | None = None,
+        trace_id: str | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return filtered trace summaries for dashboard and MCP consumers."""
@@ -54,7 +61,16 @@ class TraceService:
             collection=collection,
             limit=limit,
         )
-        return [self.summarize_trace(trace) for trace in traces]
+        summaries = [self.summarize_trace(trace) for trace in traces]
+        if not trace_id:
+            return summaries
+
+        needle = str(trace_id).strip().lower()
+        return [
+            summary
+            for summary in summaries
+            if needle in str(summary.get("trace_id") or "").lower()
+        ]
 
     def get_trace_detail(self, trace_id: str) -> dict[str, Any]:
         """Return the full stable trace payload or raise a domain error."""
@@ -62,7 +78,16 @@ class TraceService:
         trace = self.repository.get_by_trace_id(trace_id)
         if trace is None:
             raise TraceNotFoundError(f"Trace not found: {trace_id}")
-        return trace
+        summary = self.summarize_trace(trace)
+        return {
+            **trace,
+            "summary": summary,
+            "normalized_stage_names": [
+                self._normalize_stage_name(trace.get("trace_type"), stage.get("stage_name"))
+                for stage in trace.get("stages") or []
+            ],
+            "navigation": self._build_navigation(trace),
+        }
 
     def get_recent_failures(
         self,
@@ -162,14 +187,66 @@ class TraceService:
             "finished_at": trace.get("finished_at"),
             "duration_ms": trace.get("duration_ms"),
             "stage_count": len(stages),
-            "stage_names": [stage.get("stage_name") for stage in stages],
-            "last_stage": None if last_stage is None else last_stage.get("stage_name"),
+            "stage_names": [
+                self._normalize_stage_name(trace.get("trace_type"), stage.get("stage_name"))
+                for stage in stages
+            ],
+            "last_stage": None
+            if last_stage is None
+            else self._normalize_stage_name(trace.get("trace_type"), last_stage.get("stage_name")),
             "error": trace.get("error"),
+            "target_page": self._target_page_for_trace_type(trace.get("trace_type")),
         }
         for field in ("query", "source_path", "document_id", "total_chunks", "total_images", "skipped"):
             if field in trace:
                 summary[field] = trace.get(field)
         return summary
+
+    @staticmethod
+    def _normalize_stage_name(trace_type: Any, stage_name: Any) -> str | None:
+        normalized = str(stage_name or "").strip()
+        if not normalized:
+            return None
+        if str(trace_type or "").strip().lower() == "ingestion":
+            return INGESTION_STAGE_ALIASES.get(normalized, normalized)
+        return normalized
+
+    @classmethod
+    def _build_navigation(cls, trace: Mapping[str, Any]) -> list[dict[str, Any]]:
+        navigation = [
+            {
+                "label": "查看同类 Trace 列表",
+                "target_page": cls._target_page_for_trace_type(trace.get("trace_type")),
+                "trace_id": trace.get("trace_id"),
+            }
+        ]
+        document_id = trace.get("document_id")
+        source_path = trace.get("source_path")
+        if document_id is not None:
+            navigation.append(
+                {
+                    "label": "跳转到数据浏览",
+                    "target_page": "data_browser",
+                    "document_id": document_id,
+                }
+            )
+        if source_path is not None:
+            navigation.append(
+                {
+                    "label": "查看源文件",
+                    "target_page": "data_browser",
+                    "source_path": source_path,
+                }
+            )
+        return navigation
+
+    @staticmethod
+    def _target_page_for_trace_type(trace_type: Any) -> str:
+        if str(trace_type or "").strip().lower() == "ingestion":
+            return "ingestion_trace"
+        if str(trace_type or "").strip().lower() == "evaluation":
+            return "evaluation_panel"
+        return "query_trace"
 
     @staticmethod
     def _stage_summary(stage: Mapping[str, Any]) -> dict[str, Any]:
