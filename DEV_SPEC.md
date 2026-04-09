@@ -2497,10 +2497,10 @@ dashboard:
 | 阶段 D | 8 | 8 | 100% |
 | 阶段 E | 9 | 9 | 100% |
 | 阶段 F | 6 | 6 | 100% |
-| 阶段 G | 8 | 4 | 50.0% |
+| 阶段 G | 8 | 5 | 62% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **64** | **78.0%** |
+| **总计** | **82** | **65** | **79.3%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -3285,7 +3285,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | G2 | 收敛 Dashboard Context、共享读服务扩展与占位页策略 | [x] | 2026-04-09 | dashboard data access, trace compare, recent failures, and report service placeholder reads verified |
 | G3 | 完成 Dashboard 通用组件与共享展示契约 | [x] | 2026-04-09 | dashboard shared tables, charts, trace timeline, and compare rendering contracts verified |
 | G4 | 实现系统总览页 | [x] | 2026-04-09 | dashboard system overview page, collection statistics, trace empty states, and overview navigation payload verified |
-| G5 | 实现数据浏览器页 | [ ] |  |  |
+| G5 | 实现数据浏览器页 | [x] | 2026-04-09 | dashboard data browser delivered with filters, trace links, and chunk image preview |
 | G6 | 实现 Ingestion 追踪页 | [ ] |  |  |
 | G7 | 实现 Query 追踪页 | [ ] |  |  |
 | G8 | 实现 Ingestion 管理页 | [ ] |  |  |

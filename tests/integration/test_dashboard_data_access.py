@@ -9,6 +9,7 @@ import pytest
 from ragms.core.evaluation import ReportService
 from ragms.core.management import DataService, TraceService
 from ragms.core.trace_collector import TraceManager
+from ragms.observability.dashboard import build_dashboard_context, render_app_shell
 from ragms.runtime.config import load_settings
 from ragms.storage.sqlite.repositories import DocumentsRepository, ImagesRepository
 from ragms.storage.sqlite.schema import initialize_metadata_schema
@@ -103,7 +104,12 @@ def _seed_metadata(settings_path: Path) -> tuple[DataService, TraceService, Repo
                         "source_path": "docs/a.pdf",
                         "chunk_index": 0,
                         "content": "alpha",
-                        "metadata": {"page": 1, "chunk_summary": "alpha summary"},
+                        "metadata": {
+                            "page": 1,
+                            "chunk_summary": "alpha summary",
+                            "chunk_tags": ["finance"],
+                            "section_path": ["Overview"],
+                        },
                     },
                     "chunk-2": {
                         "chunk_id": "chunk-2",
@@ -111,7 +117,7 @@ def _seed_metadata(settings_path: Path) -> tuple[DataService, TraceService, Repo
                         "source_path": "docs/b.pdf",
                         "chunk_index": 0,
                         "content": "beta",
-                        "metadata": {"page": 2},
+                        "metadata": {"page": 2, "chunk_tags": ["ops"], "section_path": ["Appendix"]},
                     },
                 },
             },
@@ -128,6 +134,17 @@ def _seed_metadata(settings_path: Path) -> tuple[DataService, TraceService, Repo
     manager.start_stage(left, "dense_retrieval", input_payload={"query": "what is rag"})
     manager.finish_stage(left, "dense_retrieval", output_payload={"retrieved_count": 2}, metadata={"provider": "chroma"})
     traces.append(manager.finish_trace(left, status="succeeded", top_k_results=["chunk-1"]))
+
+    ingestion = manager.start_trace(
+        "ingestion",
+        trace_id="trace-ingest-doc-1",
+        collection="dashboard-demo",
+        document_id="doc-1",
+        source_path="docs/a.pdf",
+    )
+    manager.start_stage(ingestion, "load", input_payload={"source_path": "docs/a.pdf"})
+    manager.finish_stage(ingestion, "load", output_payload={"document_id": "doc-1"}, metadata={"loader": "markitdown"})
+    traces.append(manager.finish_trace(ingestion, status="succeeded", total_chunks=1, total_images=1))
 
     right = manager.start_trace("query", trace_id="trace-right", collection="dashboard-demo", query="what is rag")
     manager.start_stage(right, "query_processing", input_payload={"query": "what is rag"})
@@ -159,11 +176,24 @@ def _seed_metadata(settings_path: Path) -> tuple[DataService, TraceService, Repo
 def test_dashboard_data_services_expose_unified_read_models(tmp_path: Path) -> None:
     settings_path = _write_settings(tmp_path / "settings.yaml")
     data_service, trace_service, report_service = _seed_metadata(settings_path)
+    settings = load_settings(settings_path)
 
     overview = data_service.get_system_overview_metrics()
+    documents = data_service.list_documents(filters={"collection": "dashboard-demo", "keyword": "a.pdf", "tag": "finance"})
+    document_detail = data_service.get_document_detail("doc-1")
+    chunk_detail = data_service.get_chunk_detail("chunk-1")
     failures = trace_service.get_recent_failures(limit=5)
     comparison = trace_service.compare_traces("trace-left", "trace-right")
     reports = report_service.list_evaluation_runs()
+    browser = render_app_shell(
+        build_dashboard_context(
+            settings,
+            data_service=data_service,
+            trace_service=trace_service,
+            report_service=report_service,
+        ),
+        selected_page="data_browser",
+    )
 
     assert overview["collection_count"] >= 1
     assert overview["document_count"] == 2
@@ -171,8 +201,25 @@ def test_dashboard_data_services_expose_unified_read_models(tmp_path: Path) -> N
     assert overview["image_count"] == 1
     assert overview["status_counts"]["indexed"] == 1
     assert overview["status_counts"]["failed"] == 1
+    assert documents["documents"][0]["document_id"] == "doc-1"
+    assert document_detail["related_traces"][0]["trace_id"] == "trace-ingest-doc-1"
+    assert document_detail["navigation"][0]["target_page"] == "ingestion_trace"
+    assert chunk_detail["references"]["page"] == 1
+    assert chunk_detail["section_path"] == ["Overview"]
+    assert chunk_detail["images"][0]["image_id"] == "img-1"
     assert failures[0]["trace_id"] == "trace-right"
     assert comparison["left_trace_id"] == "trace-left"
     assert comparison["right_trace_id"] == "trace-right"
     assert comparison["stage_comparisons"][1]["stage_name"] == "dense_retrieval"
     assert reports[0]["run_id"] == "run-1"
+    assert browser["page"]["kind"] == "data_browser"
+    assert browser["page"]["filter_model"]["collections"] == ["dashboard-demo"]
+    assert browser["page"]["filter_model"]["statuses"] == ["failed", "indexed"]
+    assert browser["page"]["filter_model"]["pages"] == [1, 2]
+    assert browser["page"]["filter_model"]["tags"] == ["finance", "ops"]
+    assert browser["page"]["documents"]["row_count"] == 2
+    assert browser["page"]["selected_document"]["document_id"] == "doc-1"
+    assert browser["page"]["document_chunks"]["row_count"] == 1
+    assert browser["page"]["document_traces"]["rows"][0]["trace_id"] == "trace-ingest-doc-1"
+    assert browser["page"]["selected_chunk"]["chunk_id"] == "chunk-1"
+    assert browser["page"]["chunk_images"]["rows"][0]["image_id"] == "img-1"

@@ -7,14 +7,19 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from ragms.runtime.exceptions import RagMSError
 from ragms.runtime.settings_models import AppSettings
 from ragms.storage.sqlite.connection import create_sqlite_connection
 from ragms.storage.sqlite.repositories import DocumentsRepository, ImagesRepository
-from ragms.runtime.exceptions import RagMSError
+from ragms.storage.traces import TraceRepository
 
 
 class DocumentSummaryNotFoundError(RagMSError):
     """Raised when a requested document summary cannot be found."""
+
+
+class ChunkDetailNotFoundError(RagMSError):
+    """Raised when a requested chunk detail cannot be found."""
 
 
 class DataService:
@@ -30,6 +35,7 @@ class DataService:
         self.connection = connection or create_sqlite_connection(settings.storage.sqlite.path)
         self.documents_repository = DocumentsRepository(self.connection)
         self.images_repository = ImagesRepository(self.connection)
+        self.trace_repository = TraceRepository(settings.dashboard.traces_file)
         self._bm25_index_dir = settings.paths.data_dir / "indexes" / "sparse"
         self._image_root = (settings.paths.data_dir / "images").expanduser().resolve()
 
@@ -110,6 +116,136 @@ class DataService:
             "chunk_count": len(matched_chunks),
         }
 
+    def list_documents(
+        self,
+        *,
+        filters: dict[str, Any] | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> dict[str, Any]:
+        """Return document summaries with basic filters for the dashboard browser."""
+
+        normalized_filters = dict(filters or {})
+        summaries = [self._summarize_document(row) for row in self._list_all_documents()]
+        filtered = [summary for summary in summaries if self._matches_document_filters(summary, normalized_filters)]
+        filtered.sort(
+            key=lambda item: (
+                str(item.get("last_ingested_at") or ""),
+                str(item.get("updated_at") or ""),
+                str(item.get("document_id") or ""),
+            ),
+            reverse=True,
+        )
+
+        total_count = len(filtered)
+        if page_size is not None:
+            resolved_page = page or 1
+            start = (resolved_page - 1) * page_size
+            end = start + page_size
+            paged = filtered[start:end]
+            has_more = end < total_count
+        else:
+            resolved_page = page
+            paged = filtered
+            has_more = False
+
+        return {
+            "documents": paged,
+            "pagination": {
+                "page": resolved_page,
+                "page_size": page_size,
+                "total_count": total_count,
+                "returned_count": len(paged),
+                "has_more": has_more,
+            },
+            "filters": normalized_filters,
+        }
+
+    def get_document_detail(self, document_id: str) -> dict[str, Any]:
+        """Return one document detail enriched with chunk and trace navigation."""
+
+        summary = self.get_document_summary(document_id)
+        document = self.documents_repository.get_by_document_id(document_id)
+        if document is None:
+            raise DocumentSummaryNotFoundError(f"Document not found: {document_id}")
+
+        collection_chunks = self._find_document_chunks(
+            document_id=document_id,
+            source_path=str(document["source_path"]),
+        )
+        chunks = [
+            self._build_chunk_row(chunk, collection_name)
+            for collection_name, collection_items in collection_chunks.items()
+            for chunk in collection_items
+        ]
+        related_traces = self._find_related_traces(
+            document_id=document_id,
+            source_path=str(document["source_path"]),
+        )
+
+        return {
+            **summary,
+            "document": {
+                "document_id": str(document["document_id"]),
+                "source_path": str(document["source_path"]),
+                "source_sha256": document.get("source_sha256"),
+                "status": document.get("status"),
+                "current_stage": document.get("current_stage"),
+                "failure_reason": document.get("failure_reason"),
+                "last_ingested_at": document.get("last_ingested_at"),
+                "updated_at": document.get("updated_at"),
+            },
+            "chunks": chunks,
+            "related_traces": related_traces,
+            "navigation": [
+                {"label": "查看 Ingestion Trace", "target_page": "ingestion_trace", "trace_ids": [trace["trace_id"] for trace in related_traces]},
+                {"label": "留在数据浏览", "target_page": "data_browser", "document_id": document_id},
+            ],
+        }
+
+    def get_chunk_detail(self, chunk_id: str, *, collection: str | None = None) -> dict[str, Any]:
+        """Return one chunk detail with metadata, references, and previewable images."""
+
+        matches = self._find_chunk_records(chunk_id, collection=collection)
+        if not matches:
+            raise ChunkDetailNotFoundError(f"Chunk not found: {chunk_id}")
+
+        record = matches[0]
+        chunk = record["chunk"]
+        metadata = dict(chunk.get("metadata") or {})
+        images = self.images_repository.list_by_chunk_ids([chunk_id])
+        related_traces = self._find_related_traces(
+            document_id=str(chunk.get("document_id") or ""),
+            source_path=str(chunk.get("source_path") or ""),
+        )
+        return {
+            "chunk_id": str(chunk.get("chunk_id") or chunk_id),
+            "collection": record["collection"],
+            "document_id": chunk.get("document_id"),
+            "source_path": chunk.get("source_path"),
+            "chunk_index": chunk.get("chunk_index"),
+            "content": chunk.get("content"),
+            "metadata": metadata,
+            "page": metadata.get("page"),
+            "section_path": list(metadata.get("section_path") or []),
+            "tags": list(metadata.get("chunk_tags") or []),
+            "references": self._build_chunk_references(chunk, record["collection"]),
+            "images": [
+                {
+                    "image_id": row.get("image_id"),
+                    "file_path": row.get("file_path"),
+                    "page": row.get("page"),
+                    "position": row.get("position"),
+                }
+                for row in images
+            ],
+            "related_traces": related_traces,
+            "navigation": [
+                {"label": "查看文档详情", "target_page": "data_browser", "document_id": chunk.get("document_id")},
+                {"label": "查看 Ingestion Trace", "target_page": "ingestion_trace", "trace_ids": [trace["trace_id"] for trace in related_traces]},
+            ],
+        }
+
     def get_system_overview_metrics(self) -> dict[str, Any]:
         """Return dashboard-friendly aggregate metrics sourced from local persisted data."""
 
@@ -177,7 +313,13 @@ class DataService:
         if self._image_root.is_dir():
             names.update(path.name for path in self._image_root.iterdir() if path.is_dir())
 
-        rows = self.connection.execute("SELECT DISTINCT file_path FROM images").fetchall()
+        try:
+            rows = self.connection.execute("SELECT DISTINCT file_path FROM images").fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table: images" in str(exc):
+                rows = []
+            else:
+                raise
         for row in rows:
             file_path = Path(str(row["file_path"])).expanduser().resolve()
             try:
@@ -250,6 +392,40 @@ class DataService:
             "latest_updated_at": latest_updated_at,
         }
 
+    def _summarize_document(self, document: dict[str, Any]) -> dict[str, Any]:
+        collection_chunks = self._find_document_chunks(
+            document_id=str(document["document_id"]),
+            source_path=str(document["source_path"]),
+        )
+        chunks = [chunk for values in collection_chunks.values() for chunk in values]
+        image_rows = self.images_repository.list_by_document_id(str(document["document_id"]))
+        page_summary = self._build_page_summary(chunks, image_rows)
+        tags = sorted(
+            {
+                str(tag)
+                for chunk in chunks
+                for tag in dict(chunk.get("metadata") or {}).get("chunk_tags") or []
+                if str(tag).strip()
+            }
+        )
+        return {
+            "document_id": str(document["document_id"]),
+            "source_path": str(document["source_path"]),
+            "collections": list(collection_chunks),
+            "primary_collection": next(iter(collection_chunks), None),
+            "status": document.get("status"),
+            "current_stage": document.get("current_stage"),
+            "failure_reason": document.get("failure_reason"),
+            "last_ingested_at": document.get("last_ingested_at"),
+            "updated_at": document.get("updated_at"),
+            "chunk_count": len(chunks),
+            "image_count": len(image_rows),
+            "pages": page_summary["pages"],
+            "page_count": page_summary["page_count"],
+            "tags": tags,
+            "summary": self._build_document_summary_text(chunks),
+        }
+
     def _load_bm25_snapshot(self, collection_name: str) -> dict[str, Any]:
         index_path = self._bm25_index_dir / f"{collection_name}.json"
         if not index_path.is_file():
@@ -301,6 +477,69 @@ class DataService:
                 chunk_matches.sort(key=lambda item: int(item.get("chunk_index", 0) or 0))
                 matches[collection_name] = chunk_matches
         return matches
+
+    def _find_chunk_records(
+        self,
+        chunk_id: str,
+        *,
+        collection: str | None = None,
+    ) -> list[dict[str, Any]]:
+        collection_names = [collection] if collection is not None else sorted(self._discover_collection_names())
+        matches: list[dict[str, Any]] = []
+        for collection_name in collection_names:
+            snapshot = self._load_bm25_snapshot(collection_name)
+            payload = dict((snapshot.get("documents") or {}).get(chunk_id) or {})
+            if payload:
+                matches.append({"collection": collection_name, "chunk": payload})
+        return matches
+
+    def _find_related_traces(self, *, document_id: str, source_path: str) -> list[dict[str, Any]]:
+        matches: list[dict[str, Any]] = []
+        for trace in self.trace_repository.list_traces(limit=100):
+            if str(trace.get("trace_type") or "") != "ingestion":
+                continue
+            if document_id and str(trace.get("document_id") or "") == document_id:
+                matches.append(self._summarize_related_trace(trace))
+                continue
+            if source_path and str(trace.get("source_path") or "") == source_path:
+                matches.append(self._summarize_related_trace(trace))
+        return matches
+
+    @staticmethod
+    def _summarize_related_trace(trace: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "trace_id": trace.get("trace_id"),
+            "trace_type": trace.get("trace_type"),
+            "status": trace.get("status"),
+            "started_at": trace.get("started_at"),
+            "finished_at": trace.get("finished_at"),
+            "duration_ms": trace.get("duration_ms"),
+            "target_page": "ingestion_trace",
+        }
+
+    def _build_chunk_row(self, chunk: dict[str, Any], collection_name: str) -> dict[str, Any]:
+        metadata = dict(chunk.get("metadata") or {})
+        return {
+            "chunk_id": str(chunk.get("chunk_id") or ""),
+            "collection": collection_name,
+            "chunk_index": chunk.get("chunk_index"),
+            "page": metadata.get("page"),
+            "section_path": list(metadata.get("section_path") or []),
+            "tags": list(metadata.get("chunk_tags") or []),
+            "summary": str(metadata.get("chunk_summary") or "").strip() or self._truncate(str(chunk.get("content") or "")),
+            "target_page": "data_browser",
+        }
+
+    @staticmethod
+    def _build_chunk_references(chunk: dict[str, Any], collection_name: str) -> dict[str, Any]:
+        metadata = dict(chunk.get("metadata") or {})
+        return {
+            "collection": collection_name,
+            "source_path": chunk.get("source_path"),
+            "page": metadata.get("page"),
+            "section_path": list(metadata.get("section_path") or []),
+            "chunk_index": chunk.get("chunk_index"),
+        }
 
     @staticmethod
     def _build_document_summary_text(chunks: list[dict[str, Any]]) -> str | None:
@@ -393,3 +632,47 @@ class DataService:
             if actual != expected:
                 return False
         return True
+
+    def _matches_document_filters(self, summary: dict[str, Any], filters: dict[str, Any]) -> bool:
+        if not filters:
+            return True
+
+        collection = str(filters.get("collection") or "").strip()
+        if collection and collection not in (summary.get("collections") or []):
+            return False
+
+        status = str(filters.get("status") or "").strip()
+        if status and str(summary.get("status") or "") != status:
+            return False
+
+        keyword = str(filters.get("keyword") or "").strip().lower()
+        if keyword:
+            haystacks = [
+                str(summary.get("document_id") or ""),
+                str(summary.get("source_path") or ""),
+                str(summary.get("summary") or ""),
+            ]
+            if not any(keyword in item.lower() for item in haystacks):
+                return False
+
+        page = filters.get("page")
+        if page not in (None, ""):
+            try:
+                resolved_page = int(page)
+            except (TypeError, ValueError):
+                resolved_page = None
+            if resolved_page is not None and resolved_page not in (summary.get("pages") or []):
+                return False
+
+        tag = str(filters.get("tag") or "").strip()
+        if tag and tag not in (summary.get("tags") or []):
+            return False
+
+        return True
+
+    @staticmethod
+    def _truncate(value: str, limit: int = 120) -> str:
+        text = value.strip()
+        if len(text) <= limit:
+            return text
+        return f"{text[:limit].rstrip()}..."

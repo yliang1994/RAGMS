@@ -78,7 +78,7 @@ def test_dashboard_context_exposes_system_overview_ready_services(tmp_path: Path
     assert shell["page"]["metric_cards"][0]["value"] >= 1
     assert shell["page"]["recent_query_traces"]["row_count"] == 2
     assert shell["page"]["recent_failures"]["rows"][0]["trace_id"] == "trace-right"
-    assert shell["page"]["duration_trend"]["point_count"] == 2
+    assert shell["page"]["duration_trend"]["point_count"] == 3
     assert shell["page"]["navigation"][0]["target_page"] == "data_browser"
     assert shell["service_snapshot"]["report_service"] == "ReportService"
     assert metrics["config_summary"]["default_collection"] == "dashboard-demo"

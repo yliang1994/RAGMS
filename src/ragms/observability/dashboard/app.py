@@ -9,7 +9,7 @@ from typing import Any
 
 from ragms.core.evaluation import ReportService
 from ragms.core.management import DataService, TraceService
-from ragms.observability.dashboard.pages import render_system_overview
+from ragms.observability.dashboard.pages import render_data_browser, render_system_overview
 from ragms.runtime.container import PlaceholderService, ServiceContainer, build_container
 from ragms.runtime.config import load_settings
 from ragms.runtime.settings_models import AppSettings
@@ -50,6 +50,7 @@ PAGE_REGISTRY = [
         key="data_browser",
         title="数据浏览器",
         description="集合、文档、chunk 与元数据浏览。",
+        status="ready",
     ),
     DashboardPage(
         key="ingestion_management",
@@ -172,6 +173,8 @@ def render_app_shell(
 def _render_page_payload(context: DashboardContext, active_page: str) -> dict[str, Any]:
     if active_page == "system_overview":
         return render_system_overview(context)
+    if active_page == "data_browser":
+        return render_data_browser(context)
     return {
         "kind": "placeholder",
         "title": next(page.title for page in context.pages if page.key == active_page),
@@ -183,6 +186,9 @@ def _render_page_payload(context: DashboardContext, active_page: str) -> dict[st
 def _render_page(context: DashboardContext, active_page: str, renderer: Any) -> None:
     if active_page == "system_overview":
         render_system_overview(context, renderer=renderer)
+        return
+    if active_page == "data_browser":
+        render_data_browser(context, renderer=renderer)
         return
     placeholder = _render_page_payload(context, active_page)
     renderer.subheader(placeholder["title"])
