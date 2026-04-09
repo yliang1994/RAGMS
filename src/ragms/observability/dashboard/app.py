@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from collections.abc import Sequence
 from typing import Any
 
+from ragms.core.evaluation import ReportService
 from ragms.core.management import DataService, TraceService
 from ragms.runtime.container import PlaceholderService, ServiceContainer, build_container
 from ragms.runtime.config import load_settings
@@ -34,6 +35,7 @@ class DashboardContext:
     document_admin_service: Any
     report_service: Any
     pages: list[DashboardPage]
+    service_snapshot: dict[str, Any]
 
 
 PAGE_REGISTRY = [
@@ -88,10 +90,13 @@ def build_dashboard_context(
         "document_admin_service",
         PlaceholderService(name="document_admin_service", implementation="pending", config={}),
     )
-    resolved_report_service = report_service or resolved_runtime.services.get(
-        "report_service",
-        PlaceholderService(name="report_service", implementation="pending", config={}),
-    )
+    resolved_report_service = report_service or ReportService(settings)
+    service_snapshot = {
+        "data_service": resolved_data_service.__class__.__name__,
+        "trace_service": resolved_trace_service.__class__.__name__,
+        "document_admin_service": getattr(resolved_document_admin, "name", resolved_document_admin.__class__.__name__),
+        "report_service": resolved_report_service.__class__.__name__,
+    }
     return DashboardContext(
         settings=settings,
         runtime=resolved_runtime,
@@ -100,6 +105,7 @@ def build_dashboard_context(
         document_admin_service=resolved_document_admin,
         report_service=resolved_report_service,
         pages=list(PAGE_REGISTRY),
+        service_snapshot=service_snapshot,
     )
 
 
@@ -122,6 +128,7 @@ def render_app_shell(
         "refresh_interval": context.settings.dashboard.refresh_interval,
         "port": context.settings.dashboard.port,
         "traces_file": str(context.settings.dashboard.traces_file),
+        "service_snapshot": dict(context.service_snapshot),
         "placeholder": {
             "title": page.title,
             "description": page.description,
@@ -138,6 +145,7 @@ def render_app_shell(
         f"auto_refresh={context.settings.dashboard.auto_refresh} "
         f"refresh_interval={context.settings.dashboard.refresh_interval}s"
     )
+    renderer.code(str(context.service_snapshot), language="python")
     renderer.sidebar.title("导航")
     chosen_page = renderer.sidebar.radio(
         "页面",

@@ -8,6 +8,7 @@ import pytest
 from ragms.observability.dashboard import build_dashboard_context, render_app_shell
 from ragms.runtime.config import load_settings
 from ragms.runtime.container import build_container, PlaceholderService
+from ragms.core.evaluation import ReportService
 from scripts.run_dashboard import run_dashboard_main
 
 
@@ -76,7 +77,8 @@ def test_dashboard_shell_registers_all_placeholder_pages_and_context(tmp_path: P
     assert shell["refresh_interval"] == 7
     assert shell["title"] == "RagMS Local Dashboard"
     assert isinstance(context.document_admin_service, PlaceholderService)
-    assert isinstance(context.report_service, PlaceholderService)
+    assert isinstance(context.report_service, ReportService)
+    assert context.service_snapshot["trace_service"] == "TraceService"
 
 
 @pytest.mark.integration

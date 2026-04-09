@@ -64,6 +64,83 @@ class TraceService:
             raise TraceNotFoundError(f"Trace not found: {trace_id}")
         return trace
 
+    def get_recent_failures(
+        self,
+        *,
+        trace_type: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Return recent failed or partially successful traces in summary form."""
+
+        failed = self.repository.list_traces(
+            trace_type=trace_type,
+            status="failed",
+            limit=limit,
+        )
+        partial = self.repository.list_traces(
+            trace_type=trace_type,
+            status="partial_success",
+            limit=limit,
+        )
+        merged = failed + partial
+        merged.sort(key=lambda item: str(item.get("started_at") or ""), reverse=True)
+        return [self.summarize_trace(trace) for trace in merged[:limit]]
+
+    def compare_traces(self, left_trace_id: str, right_trace_id: str) -> dict[str, Any]:
+        """Return a structured comparison between two traces."""
+
+        left = self.get_trace_detail(left_trace_id)
+        right = self.get_trace_detail(right_trace_id)
+
+        left_stages = {
+            str(stage.get("stage_name")): stage
+            for stage in left.get("stages") or []
+        }
+        right_stages = {
+            str(stage.get("stage_name")): stage
+            for stage in right.get("stages") or []
+        }
+        ordered_stage_names = list(dict.fromkeys([*left_stages.keys(), *right_stages.keys()]))
+        stage_comparisons = []
+        fallback_differences = []
+        for stage_name in ordered_stage_names:
+            left_stage = left_stages.get(stage_name)
+            right_stage = right_stages.get(stage_name)
+            comparison = {
+                "stage_name": stage_name,
+                "left": None if left_stage is None else self._stage_summary(left_stage),
+                "right": None if right_stage is None else self._stage_summary(right_stage),
+                "elapsed_delta_ms": self._elapsed_delta(left_stage, right_stage),
+            }
+            stage_comparisons.append(comparison)
+            left_fallback = None if left_stage is None else dict(left_stage.get("metadata") or {}).get("fallback_reason")
+            right_fallback = None if right_stage is None else dict(right_stage.get("metadata") or {}).get("fallback_reason")
+            if left_fallback != right_fallback:
+                fallback_differences.append(
+                    {
+                        "stage_name": stage_name,
+                        "left_fallback_reason": left_fallback,
+                        "right_fallback_reason": right_fallback,
+                    }
+                )
+
+        return {
+            "left_trace_id": left_trace_id,
+            "right_trace_id": right_trace_id,
+            "stage_comparisons": stage_comparisons,
+            "metric_deltas": {
+                "duration_ms": self._numeric_delta(left.get("duration_ms"), right.get("duration_ms")),
+                "stage_count": self._numeric_delta(len(left.get("stages") or []), len(right.get("stages") or [])),
+            },
+            "fallback_differences": fallback_differences,
+            "summary": {
+                "left_status": left.get("status"),
+                "right_status": right.get("status"),
+                "left_trace_type": left.get("trace_type"),
+                "right_trace_type": right.get("trace_type"),
+            },
+        }
+
     def summarize_trace(self, trace: Mapping[str, Any]) -> dict[str, Any]:
         """Build one compact trace summary without losing navigation fields."""
 
@@ -86,3 +163,28 @@ class TraceService:
             if field in trace:
                 summary[field] = trace.get(field)
         return summary
+
+    @staticmethod
+    def _stage_summary(stage: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "status": stage.get("status"),
+            "elapsed_ms": stage.get("elapsed_ms"),
+            "metadata": dict(stage.get("metadata") or {}),
+            "error": stage.get("error"),
+        }
+
+    @staticmethod
+    def _numeric_delta(left: Any, right: Any) -> int | None:
+        if left is None or right is None:
+            return None
+        return int(left) - int(right)
+
+    @staticmethod
+    def _elapsed_delta(left_stage: Mapping[str, Any] | None, right_stage: Mapping[str, Any] | None) -> int | None:
+        if left_stage is None or right_stage is None:
+            return None
+        left_elapsed = left_stage.get("elapsed_ms")
+        right_elapsed = right_stage.get("elapsed_ms")
+        if left_elapsed is None or right_elapsed is None:
+            return None
+        return int(left_elapsed) - int(right_elapsed)

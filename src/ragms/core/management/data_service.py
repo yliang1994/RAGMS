@@ -110,6 +110,52 @@ class DataService:
             "chunk_count": len(matched_chunks),
         }
 
+    def get_system_overview_metrics(self) -> dict[str, Any]:
+        """Return dashboard-friendly aggregate metrics sourced from local persisted data."""
+
+        collection_payload = self.list_collections()
+        collections = list(collection_payload.get("collections") or [])
+        document_rows = self._list_all_documents()
+
+        total_documents = len({str(row["document_id"]) for row in document_rows})
+        total_chunks = sum(int(item.get("chunk_count") or 0) for item in collections)
+        total_images = sum(int(item.get("image_count") or 0) for item in collections)
+        status_counts: dict[str, int] = {}
+        for row in document_rows:
+            status = str(row.get("status") or "unknown")
+            status_counts[status] = status_counts.get(status, 0) + 1
+
+        recent_documents = [
+            {
+                "document_id": str(row.get("document_id") or ""),
+                "source_path": str(row.get("source_path") or ""),
+                "status": row.get("status"),
+                "current_stage": row.get("current_stage"),
+                "last_ingested_at": row.get("last_ingested_at"),
+                "updated_at": row.get("updated_at"),
+            }
+            for row in sorted(
+                document_rows,
+                key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+                reverse=True,
+            )[:5]
+        ]
+        return {
+            "collection_count": len(collections),
+            "document_count": total_documents,
+            "chunk_count": total_chunks,
+            "image_count": total_images,
+            "status_counts": status_counts,
+            "collections": collections,
+            "recent_documents": recent_documents,
+            "config_summary": {
+                "default_collection": self.settings.vector_store.collection,
+                "retrieval_strategy": self.settings.retrieval.strategy,
+                "rerank_backend": self.settings.retrieval.rerank_backend,
+                "trace_log_file": str(self.settings.dashboard.traces_file),
+            },
+        }
+
     def _discover_collection_names(self) -> set[str]:
         names = {str(self.settings.vector_store.collection)}
         if self._bm25_index_dir.is_dir():
@@ -129,6 +175,31 @@ class DataService:
                 names.add(relative.parts[0])
 
         return {name for name in names if str(name).strip()}
+
+    def _list_all_documents(self) -> list[dict[str, Any]]:
+        try:
+            rows = self.connection.execute(
+                """
+                SELECT
+                    document_id,
+                    source_path,
+                    source_sha256,
+                    status,
+                    current_stage,
+                    failure_reason,
+                    last_ingested_at,
+                    version,
+                    created_at,
+                    updated_at
+                FROM documents
+                ORDER BY updated_at DESC, created_at DESC
+                """
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table: documents" in str(exc):
+                return []
+            raise
+        return [dict(row) for row in rows]
 
     def _summarize_collection(self, collection_name: str) -> dict[str, Any]:
         snapshot = self._load_bm25_snapshot(collection_name)
