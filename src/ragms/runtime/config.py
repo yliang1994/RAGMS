@@ -75,6 +75,7 @@ def _normalize_paths(settings: AppSettings, settings_path: Path) -> AppSettings:
     updated.storage.sqlite.path = _resolve_path(updated.storage.sqlite.path, base_dir)
     updated.observability.log_file = _resolve_path(updated.observability.log_file, base_dir)
     updated.dashboard.traces_file = _resolve_path(updated.dashboard.traces_file, base_dir)
+    updated.dashboard.title = updated.dashboard.title.strip() or f"{updated.app_name} Dashboard"
     return updated
 
 

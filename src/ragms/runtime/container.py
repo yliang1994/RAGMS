@@ -144,6 +144,16 @@ def _build_services(settings: AppSettings) -> dict[str, Any]:
             implementation=settings.retrieval.strategy,
             config=settings.retrieval.model_dump(mode="python"),
         ),
+        "document_admin_service": PlaceholderService(
+            name="document_admin_service",
+            implementation="pending",
+            config={},
+        ),
+        "report_service": PlaceholderService(
+            name="report_service",
+            implementation="pending",
+            config={},
+        ),
     }
 
 

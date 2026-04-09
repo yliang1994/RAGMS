@@ -132,6 +132,9 @@ class DashboardSettings(StrictModel):
     enabled: bool = True
     port: int = 8501
     traces_file: Path = Path("logs/traces.jsonl")
+    auto_refresh: bool = True
+    refresh_interval: int = Field(default=5, ge=1, le=3600)
+    title: str = "RagMS Dashboard"
 
 
 class AppSettings(StrictModel):
