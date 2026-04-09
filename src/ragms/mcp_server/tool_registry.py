@@ -13,6 +13,7 @@ from ragms.mcp_server.tools import (
     bind_documents_tool,
     bind_ingest_tool,
     bind_query_tool,
+    bind_traces_tool,
 )
 from ragms.mcp_server.schemas import get_input_schema
 from ragms.runtime.exceptions import RagMSError
@@ -158,7 +159,7 @@ def build_tool_registry(
         ToolDefinition(
             name="get_trace_detail",
             description="查询指定 trace 的详细执行过程，用于排障和性能分析。",
-            handler=_get_trace_detail,
+            handler=_get_trace_detail if runtime is None else bind_traces_tool(runtime),
             input_schema=get_input_schema("get_trace_detail"),
         ),
         ToolDefinition(

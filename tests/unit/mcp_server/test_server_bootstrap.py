@@ -147,6 +147,6 @@ async def test_stdio_server_lists_tools_and_handles_a_placeholder_tool(tmp_path:
         "get_trace_detail",
         "evaluate_collection",
     ]
-    assert result.isError is False
+    assert result.isError is True
     assert result.content[0].type == "text"
-    assert result.content[0].text == "get_trace_detail is not implemented yet"
+    assert result.content[0].text == "Trace not found: trace-1"

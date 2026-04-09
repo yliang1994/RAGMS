@@ -2496,11 +2496,11 @@ dashboard:
 | 阶段 C | 17 | 17 | 100% |
 | 阶段 D | 8 | 8 | 100% |
 | 阶段 E | 9 | 9 | 100% |
-| 阶段 F | 6 | 5 | 83% |
+| 阶段 F | 6 | 6 | 100% |
 | 阶段 G | 8 | 0 | 0% |
 | 阶段 H | 9 | 0 | 0% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **59** | **72.0%** |
+| **总计** | **82** | **60** | **73.2%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -3167,7 +3167,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | F3 | 为 Ingestion 打点并回传 `trace_id` | [x] | 2026-04-09 | ingestion trace logging, skipped trace semantics, and progress event fields verified |
 | F4 | 为 Query 打点并回传 `trace_id` | [x] | 2026-04-09 | query trace stage logging and response `trace_id` propagation verified |
 | F5 | 规范进度回调并实现 TraceService 读取能力 | [x] | 2026-04-09 | progress callback schema and trace read service integration tests passed |
-| F6 | 接入 `get_trace_detail` MCP Tool | [ ] |  |  |
+| F6 | 接入 `get_trace_detail` MCP Tool | [x] | 2026-04-09 | trace detail mcp tool, protocol error mapping, and server integration tests passed |
 
 ##### F1 实现 Trace Schema、StageRecorder 与 TraceManager
 
