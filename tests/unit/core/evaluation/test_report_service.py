@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from ragms.core.evaluation import ReportService
-from ragms.core.evaluation.report_service import ReportServiceError
+from ragms.core.evaluation.report_service import ReportServiceError, apply_regression_fixes, collect_open_stage_gaps
 from ragms.core.models import EvaluationRunSummary, build_baseline_scope
 from ragms.runtime.settings_models import AppSettings
 
@@ -103,3 +103,28 @@ def test_report_service_compare_against_baseline_uses_scope_binding(tmp_path: Pa
     assert comparison["baseline_run"]["run_id"] == "baseline"
     assert comparison["metric_deltas"]["mrr"] == pytest.approx(0.14)
     assert build_baseline_scope(collection="docs", dataset_version="v1", backend_set=["custom_metrics"]) == comparison["current_run"]["baseline_scope"]
+
+
+def test_report_service_quality_gate_and_gap_collection_are_stable() -> None:
+    quality_gate = ReportService.assert_quality_gate(
+        {
+            "hit_rate_at_k": 0.91,
+            "mrr": 0.82,
+            "ndcg_at_k": 0.84,
+            "faithfulness": 0.92,
+        }
+    )
+
+    assert quality_gate["status"] == "failed"
+    assert quality_gate["failed_metrics"][0]["metric"] == "ndcg_at_k"
+    gaps = collect_open_stage_gaps(
+        {
+            "failed_samples": [{"sample_id": "sample-2", "stage": "sample_build", "error": {"message": "broken"}}],
+            "quality_gate": quality_gate,
+        }
+    )
+    remediation = apply_regression_fixes({"failed_samples": [], "quality_gate": quality_gate})
+
+    assert gaps[0]["kind"] == "failed_sample"
+    assert gaps[1]["kind"] == "quality_gate"
+    assert remediation["status"] == "needs_follow_up"

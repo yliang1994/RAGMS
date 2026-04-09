@@ -17,8 +17,60 @@ class ReportServiceError(ValueError):
     """Raised when report baseline operations receive invalid scope or run inputs."""
 
 
+def collect_open_stage_gaps(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Collect remaining quality and failure gaps from one evaluation report."""
+
+    gaps: list[dict[str, Any]] = []
+    for failed_sample in report.get("failed_samples") or []:
+        gaps.append(
+            {
+                "kind": "failed_sample",
+                "sample_id": failed_sample.get("sample_id"),
+                "stage": failed_sample.get("stage"),
+                "error": failed_sample.get("error"),
+            }
+        )
+    quality_gate = dict(report.get("quality_gate") or {})
+    for failed_metric in quality_gate.get("failed_metrics") or []:
+        gaps.append(
+            {
+                "kind": "quality_gate",
+                "metric": failed_metric.get("metric"),
+                "actual": failed_metric.get("actual"),
+                "threshold": failed_metric.get("threshold"),
+            }
+        )
+    return gaps
+
+
+def apply_regression_fixes(report: dict[str, Any]) -> dict[str, Any]:
+    """Return the normalized remediation summary for open evaluation gaps."""
+
+    open_gaps = collect_open_stage_gaps(report)
+    return {
+        "applied": [],
+        "open_gaps": open_gaps,
+        "status": "clean" if not open_gaps else "needs_follow_up",
+    }
+
+
 class ReportService:
     """Persist and query local evaluation run reports."""
+
+    QUALITY_THRESHOLDS = {
+        "hit_rate_at_k": 0.90,
+        "mrr": 0.80,
+        "ndcg_at_k": 0.85,
+        "faithfulness": 0.90,
+        "answer_relevancy": 0.85,
+    }
+    METRIC_ALIASES = {
+        "faithfulness": ("faithfulness",),
+        "answer_relevancy": ("answer_relevancy", "answer_relevance"),
+        "hit_rate_at_k": ("hit_rate_at_k",),
+        "mrr": ("mrr",),
+        "ndcg_at_k": ("ndcg_at_k",),
+    }
 
     def __init__(
         self,
@@ -47,6 +99,10 @@ class ReportService:
             dataset_version=payload.get("dataset_version"),
             backend_set=payload.get("backend_set") or [],
         )
+        quality_gate = self.assert_quality_gate(dict(payload.get("aggregate_metrics") or {}))
+        payload["quality_gate"] = quality_gate
+        if str(payload.get("quality_gate_status") or "").strip() in {"", "not_run"}:
+            payload["quality_gate_status"] = quality_gate["status"]
         self._runs_dir.mkdir(parents=True, exist_ok=True)
         self._reports_dir.mkdir(parents=True, exist_ok=True)
         report_path = self._reports_dir / f"{run_id}.json"
@@ -377,6 +433,40 @@ class ReportService:
         if detail is None:
             raise ReportServiceError(f"Unknown evaluation run: {run_id}")
         return detail
+
+    @classmethod
+    def assert_quality_gate(cls, aggregate_metrics: dict[str, Any]) -> dict[str, Any]:
+        """Evaluate whether a metric summary satisfies the fixed H-stage thresholds."""
+
+        checked_metrics: dict[str, float] = {}
+        failed_metrics: list[dict[str, Any]] = []
+        for canonical_name, threshold in cls.QUALITY_THRESHOLDS.items():
+            actual = cls._resolve_metric_value(aggregate_metrics, canonical_name)
+            if actual is None:
+                continue
+            checked_metrics[canonical_name] = actual
+            if actual < threshold:
+                failed_metrics.append(
+                    {
+                        "metric": canonical_name,
+                        "actual": actual,
+                        "threshold": threshold,
+                    }
+                )
+        return {
+            "status": "failed" if failed_metrics else "passed",
+            "checked_metrics": checked_metrics,
+            "failed_metrics": failed_metrics,
+        }
+
+    @classmethod
+    def _resolve_metric_value(cls, aggregate_metrics: dict[str, Any], canonical_name: str) -> float | None:
+        for alias in cls.METRIC_ALIASES.get(canonical_name, (canonical_name,)):
+            value = aggregate_metrics.get(alias)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            return float(value)
+        return None
 
     @staticmethod
     def _timestamp_for(path: Path) -> str:

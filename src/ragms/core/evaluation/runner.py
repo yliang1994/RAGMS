@@ -202,6 +202,7 @@ class EvalRunner:
                     failed_samples=failed_samples,
                 ),
             )
+            quality_gate = self.report_service.assert_quality_gate(aggregate_metrics)
             summary = EvaluationRunSummary(
                 run_id=run_id,
                 trace_id=trace.trace_id,
@@ -216,10 +217,13 @@ class EvalRunner:
                 },
                 started_at=trace.started_at,
                 aggregate_metrics=aggregate_metrics,
-                quality_gate_status="not_run",
+                quality_gate_status=quality_gate["status"],
                 samples=evaluated_samples,
                 failed_samples=failed_samples,
-                artifacts={"manifest_path": dataset_payload.get("manifest_path")},
+                artifacts={
+                    "manifest_path": dataset_payload.get("manifest_path"),
+                    "quality_gate": quality_gate,
+                },
             )
             persisted = record_evaluation_trace(
                 self.trace_manager,
@@ -254,7 +258,7 @@ class EvalRunner:
             dataset_version=dataset_payload.get("dataset_version"),
             backends=resolved_backends,
             metrics_summary=aggregate_metrics,
-            quality_gate_status="not_run",
+            quality_gate_status=quality_gate["status"],
         )
         self.trace_repository.append(finished_trace)
         return {
