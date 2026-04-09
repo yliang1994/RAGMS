@@ -8,7 +8,13 @@ import uuid
 
 from ragms.core.evaluation.dataset_loader import DatasetLoader
 from ragms.core.evaluation.report_service import ReportService
-from ragms.core.models import EvaluationRunSummary, EvaluationSample, QueryResponsePayload, build_evaluation_input
+from ragms.core.models import (
+    EvaluationRunSummary,
+    EvaluationSample,
+    QueryResponsePayload,
+    build_evaluation_input,
+    normalize_backend_set,
+)
 from ragms.core.trace_collector import TraceManager
 from ragms.core.trace_collector.trace_manager import record_evaluation_trace
 from ragms.core.trace_collector.trace_utils import serialize_exception
@@ -105,12 +111,15 @@ class EvalRunner:
         dataset_version: str | None = None,
         labels: list[str] | None = None,
         collection: str | None = None,
+        backend_set: list[str] | None = None,
         top_k: int = 5,
         baseline_scope: str | None = None,
     ) -> dict[str, Any]:
         """Run one full evaluation and persist its report and evaluation trace."""
 
         run_id = uuid.uuid4().hex
+        resolved_backends = normalize_backend_set(backend_set) or resolve_evaluator_backend_set(self.settings)
+        evaluator = self.evaluator if resolved_backends == resolve_evaluator_backend_set(self.settings) else build_evaluator_stack({"backends": resolved_backends})
         trace = self.trace_manager.start_trace(
             "evaluation",
             trace_id=uuid.uuid4().hex,
@@ -118,7 +127,7 @@ class EvalRunner:
             metadata={"stage_order": list(self.STAGE_ORDER)},
             run_id=run_id,
             dataset_version=dataset_version,
-            backends=resolve_evaluator_backend_set(self.settings),
+            backends=resolved_backends,
         )
         try:
             dataset_payload = record_evaluation_trace(
@@ -169,10 +178,10 @@ class EvalRunner:
                 stage_name="evaluator_execute",
                 input_payload={
                     "sample_count": len(built_samples),
-                    "backend_set": resolve_evaluator_backend_set(self.settings),
+                    "backend_set": resolved_backends,
                 },
-                metadata={"evaluator": self.evaluator.__class__.__name__},
-                operation=lambda: self._evaluate_samples(built_samples),
+                metadata={"evaluator": evaluator.__class__.__name__},
+                operation=lambda: self._evaluate_samples(built_samples, evaluator=evaluator),
                 output_builder=lambda result: {
                     "sample_count": len(result[0]),
                     "failed_count": len(result[1]),
@@ -199,7 +208,7 @@ class EvalRunner:
                 collection=str(collection or dataset_payload.get("collection") or self.settings.vector_store.collection),
                 dataset_name=dataset_payload.get("dataset_name"),
                 dataset_version=dataset_payload.get("dataset_version"),
-                backend_set=resolve_evaluator_backend_set(self.settings),
+                backend_set=resolved_backends,
                 baseline_scope=baseline_scope,
                 config_snapshot={
                     **dict(dataset_payload.get("config_snapshot") or {}),
@@ -243,7 +252,7 @@ class EvalRunner:
             status=final_status,
             run_id=run_id,
             dataset_version=dataset_payload.get("dataset_version"),
-            backends=resolve_evaluator_backend_set(self.settings),
+            backends=resolved_backends,
             metrics_summary=aggregate_metrics,
             quality_gate_status="not_run",
         )
@@ -283,12 +292,14 @@ class EvalRunner:
     def _evaluate_samples(
         self,
         samples: list[EvaluationSample],
+        *,
+        evaluator: CompositeEvaluator,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         evaluated: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
         for sample in samples:
             try:
-                result = self.evaluator.evaluate(
+                result = evaluator.evaluate(
                     [sample.generated_answer or ""],
                     [sample.ground_truth_answer] if sample.ground_truth_answer else [],
                     metadata={

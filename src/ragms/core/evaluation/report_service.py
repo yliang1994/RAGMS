@@ -154,10 +154,14 @@ class ReportService:
         """Compare one run against the active baseline in the same scope."""
 
         current = self._require_report(run_id)
+        backend_set = list(current.get("backend_set") or current["report"].get("backend_set") or [])
+        dataset_version = str(current.get("dataset_version") or "")
+        if not backend_set or not dataset_version:
+            return None
         baseline = self.get_baseline(
             collection=str(current["collection"]),
-            dataset_version=str(current["dataset_version"]),
-            backend_set=list(current.get("backend_set") or current["report"].get("backend_set") or []),
+            dataset_version=dataset_version,
+            backend_set=backend_set,
         )
         if baseline is None or baseline["run_id"] == run_id:
             return None

@@ -3466,7 +3466,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | H5 | 实现 `CompositeEvaluator`、工厂装配与配置切换 | [x] | 2026-04-09 | composite evaluator stack, backend resolution, and config-driven evaluation ordering implemented |
 | H6 | 实现 `EvalRunner`、`EvaluationTrace` 与报告持久化 | [x] | 2026-04-09 | evaluation runner, evaluation trace logging, sqlite report persistence, and dashboard-readable report detail flows passed |
 | H7 | 实现 baseline 管理与稳定对比契约 | [x] | 2026-04-09 | baseline scope contract, service-managed binding, and consistent compare payloads shipped for report/dashboard consumers |
-| H8 | 打通 Dashboard 评估工作台与真实运行入口 | [ ] |  |  |
+| H8 | 打通 Dashboard 评估工作台与真实运行入口 | [x] | 2026-04-09 | dashboard evaluation workbench now supports injected run entry, result rendering, baseline actions, and visible e2e report flow |
 | H9 | 接入 `evaluate_collection` MCP Tool | [ ] |  |  |
 | H10 | 基于评估结果完成质量门槛与前序阶段收口 | [ ] |  |  |
 
