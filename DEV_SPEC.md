@@ -3644,7 +3644,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | I1 | 实现 MCP 协议级全工具最终 E2E 回归 | [x] | 2026-04-09 | protocol-level child-process mcp client simulation now covers handshake, tools list, six tool roundtrips, and invalid-parameter error semantics |
 | I2 | 实现 Dashboard 最终回归 E2E | [x] | 2026-04-09 | dashboard final e2e regression now covers six-page smoke, cross-page navigation, evaluation entry/result flow, and required empty states |
 | I3 | 完成一键全链路验收脚本与摘要输出 | [x] | 2026-04-09 | one-command acceptance script now chains ingestion, query, mcp, trace, dashboard, and evaluation with structured scenario summary output |
-| I4 | 完善 README、MCP 配置、Dashboard 与架构文档 | [ ] |  |  |
+| I4 | 完善 README、MCP 配置、Dashboard 与架构文档 | [x] | 2026-04-09 | README and docs now cover install, config, mcp examples, dashboard usage, acceptance commands, architecture, and troubleshooting paths |
 | I5 | 补齐关键抽象契约测试与最终回归基线 | [ ] |  |  |
 | I6 | 完成最终验收、交付清单与版本收口 | [ ] |  |  |
 

@@ -1,150 +1,213 @@
 # RagServer
 
-This repository follows `DEV_SPEC.md` as the primary source of truth.
+RagServer 是一个本地优先的 RAG 系统，包含：
 
-## Current status
+- 文档摄取与元数据/图片持久化
+- Hybrid Query Engine
+- MCP Server
+- Trace / Dashboard
+- Evaluation / Baseline / Acceptance
 
-Stage A1 establishes the minimal Python project scaffold:
+项目以 [DEV_SPEC.md](/home/yliang/cv_project/RagServer/DEV_SPEC.md) 为实现计划与交付记录来源。
 
-- `src/ragms` package
-- `scripts/` entrypoint directory
-- `tests/` baseline with isolated test environment defaults
-- `data/` and `logs/` local runtime directories
-
-## Local bootstrap
+## 1. 环境准备
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install pydantic pyyaml python-dotenv pytest pytest-mock pytest-check pytest-bdd
 python -m pip install -e .
-python scripts/run_mcp_server.py
-pytest --collect-only
+python -m pip install pytest pytest-mock pytest-check pytest-bdd pytest-cov
 ```
 
-## Notes
+所有 `python`、`pytest`、脚本执行都应在 `.venv` 中完成。
 
-- Activate `.venv` before running any Python command.
-- `tests/conftest.py` sets isolated runtime paths for test runs.
+## 2. 配置
 
-## Real Test Scripts
+默认配置文件是 `settings.yaml`。最重要的字段：
 
-`tests/real_test/` 下有 3 个面向真实数据和真实服务的端到端脚本：
+- `vector_store.collection`
+- `storage.sqlite.path`
+- `observability.log_file`
+- `dashboard.port`
+- `evaluation.backends`
 
-- `run_real_ingestion_test.py`：验证真实摄取链路，覆盖首次建库、增量跳过、强制重建。
-- `run_real_query_test.py`：验证直连查询链路，调用 `scripts/query_cli.py`。
-- `run_real_mcp_flow_test.py`：验证完整 MCP stdio 流程，覆盖 `initialize`、`tools/list`、`ingest_documents`、`get_document_summary`、`query_knowledge_hub`。
+如果你要接真实模型，需要在 `llm`、`embedding`、`vision_llm` 中填入对应 provider 的 `api_key` / `base_url`。
 
-### 前置条件
+## 3. 常用命令
 
-- 使用仓库虚拟环境：`.venv`
-- 已安装项目依赖，并且 `.venv` 中可导入 `ragms`
-- `settings.yaml` 中的真实模型和向量库配置可用
-- 可访问外部模型服务
-  - `run_real_query_test.py` 和 `run_real_mcp_flow_test.py` 会触发真实 embedding / LLM 请求
-  - 在受限沙箱里运行时，常见失败现象是 `ConnectError` 或 `Operation not permitted`
-- `data/src_raw_data` 下存在待测试 PDF
-- `query_test.txt` 中存在非空查询文本
-
-### 1. 真实摄取测试
-
-用途：检查真实 PDF 摄取、分块、存储、稀疏索引和元数据产物是否完整。
-
-当前工作区里，`data/src_raw_data` 共有 `4` 个 PDF，因此建议显式传入 `--expected-count 4`。
+摄取：
 
 ```bash
-.venv/bin/python tests/real_test/run_real_ingestion_test.py --expected-count 4
+source .venv/bin/activate
+python scripts/ingest_documents.py --settings settings.yaml --path data/src_raw_data
 ```
 
-常用参数：
-
-- `--settings`：指定配置文件，默认 `settings.yaml`
-- `--source-dir`：指定 PDF 目录，默认 `data/src_raw_data`
-- `--collection`：指定测试集合名，默认 `real_c_ingestion_test`
-- `--expected-count`：要求目录内 PDF 数量与该值一致
-
-脚本会顺序执行三轮：
-
-- `force-index`
-- `incremental-skip`
-- `force-rebuild`
-
-成功时会打印 `=== Real Ingestion Test Summary ===`，并汇总每轮状态与产物检查结果。
-
-### 2. 真实查询测试
-
-用途：检查直连查询链路是否能返回答案、引用和 top chunks。
+查询：
 
 ```bash
-.venv/bin/python tests/real_test/run_real_query_test.py
+source .venv/bin/activate
+python scripts/query_cli.py --settings settings.yaml "what is rag"
 ```
 
-常用参数：
-
-- `--settings`：指定配置文件
-- `--query-file`：指定查询文本文件，默认 `query_test.txt`
-- `--collection`：指定查询集合，默认 `real_c_ingestion_test`
-- `--top-k`：检索 chunk 数，默认 `3`
-- `--print-top-chunks`：输出前 N 个 chunk，默认 `3`
-- `--filters`：透传 JSON 过滤条件
-- `--return-debug`：输出调试信息
-
-示例：
+MCP Server：
 
 ```bash
-.venv/bin/python tests/real_test/run_real_query_test.py \
-  --collection real_c_ingestion_test \
-  --top-k 5 \
-  --print-top-chunks 5
+source .venv/bin/activate
+python scripts/run_mcp_server.py --settings settings.yaml
 ```
 
-成功时会打印 `=== Real Query Test Summary ===`，其中包含：
-
-- `retrieved_chunks`
-- `printed_top_chunks`
-- CLI 的完整 `stdout` / `stderr`
-
-### 3. 真实 MCP 流程测试
-
-用途：检查 MCP server 的完整 stdio 调用流程是否跑通。
+Dashboard：
 
 ```bash
-.venv/bin/python tests/real_test/run_real_mcp_flow_test.py
+source .venv/bin/activate
+python scripts/run_dashboard.py --settings settings.yaml --serve
 ```
 
-常用参数：
+评估：
 
-- `--settings`：指定配置文件
-- `--source-dir`：指定摄取目录
-- `--query-file`：指定查询文本文件
-- `--collection`：指定摄取和查询集合，默认 `real_c_ingestion_test`
-- `--top-k`：传给 `query_knowledge_hub` 的 top-k，默认 `5`
-- `--force-rebuild`：摄取时强制重建
-- `--return-debug`：查询时返回 debug 信息
-- `--timeout-seconds`：单次 MCP 响应超时，默认 `600`
-- `--log-level`：MCP server 日志级别，默认 `INFO`
-
-示例：
+当前真实评估入口已接入 Dashboard 和 MCP `evaluate_collection`；本地验收推荐直接跑：
 
 ```bash
-.venv/bin/python tests/real_test/run_real_mcp_flow_test.py \
-  --collection real_c_ingestion_test \
-  --top-k 5 \
-  --log-level INFO
+source .venv/bin/activate
+python scripts/run_acceptance.py
 ```
 
-成功时会打印 `=== Real MCP Flow Test Summary ===`，并输出每一步的 request/response：
+## 4. MCP 客户端配置示例
 
-- `initialize`
-- `tools/list`
-- `tools/call:list_collections`
-- `tools/call:ingest_documents`
-- `tools/call:get_document_summary`
-- `tools/call:query_knowledge_hub`
+GitHub Copilot `mcp.json`：
 
-如果你只想快速验证当前修复是否生效，推荐按下面顺序跑：
+```json
+{
+  "servers": {
+    "ragms": {
+      "command": "/abs/path/to/RagServer/.venv/bin/python",
+      "args": [
+        "/abs/path/to/RagServer/scripts/run_mcp_server.py",
+        "--settings",
+        "/abs/path/to/RagServer/settings.yaml"
+      ]
+    }
+  }
+}
+```
+
+Claude Desktop `claude_desktop_config.json`：
+
+```json
+{
+  "mcpServers": {
+    "ragms": {
+      "command": "/abs/path/to/RagServer/.venv/bin/python",
+      "args": [
+        "/abs/path/to/RagServer/scripts/run_mcp_server.py",
+        "--settings",
+        "/abs/path/to/RagServer/settings.yaml"
+      ]
+    }
+  }
+}
+```
+
+可直接按你的本地路径替换上面的绝对路径。
+
+## 5. Dashboard 页面
+
+当前 Dashboard 包含六页：
+
+- `system_overview`
+- `data_browser`
+- `ingestion_management`
+- `ingestion_trace`
+- `query_trace`
+- `evaluation_panel`
+
+`evaluation_panel` 已支持：
+
+- 查看历史报告
+- 启动真实评估入口
+- baseline 设置与对比
+- 失败样本查看
+- 配置快照与趋势查看
+
+## 6. Trace 与报告位置
+
+- Trace JSONL：`logs/traces.jsonl`
+- SQLite 元数据：`data/metadata/ragms.db`
+- 评估报告：`data/evaluation/reports/*.json`
+- 评估运行记录：`data/evaluation/runs/*.json`
+
+## 7. 一键验收
 
 ```bash
-.venv/bin/python tests/real_test/run_real_query_test.py
-.venv/bin/python tests/real_test/run_real_mcp_flow_test.py
+source .venv/bin/activate
+python scripts/run_acceptance.py
 ```
+
+脚本会输出结构化 JSON 摘要，至少包含：
+
+- `status`
+- `failed_steps`
+- `artifact_paths`
+- `trace_ids`
+- `run_ids`
+- 三个核心场景映射
+
+## 8. 测试命令
+
+MCP 协议级 E2E：
+
+```bash
+source .venv/bin/activate
+pytest tests/e2e/test_mcp_client_simulation.py
+```
+
+Dashboard 最终回归：
+
+```bash
+source .venv/bin/activate
+pytest tests/e2e/test_dashboard_smoke.py tests/e2e/test_dashboard_navigation_regression.py tests/e2e/test_evaluation_visible_in_dashboard.py
+```
+
+全链路验收：
+
+```bash
+source .venv/bin/activate
+pytest tests/e2e/test_full_chain_acceptance.py
+```
+
+最终覆盖率：
+
+```bash
+source .venv/bin/activate
+pytest --cov=src/ragms --cov-report=term-missing tests/unit tests/integration tests/e2e
+```
+
+## 9. 常见问题
+
+`ModuleNotFoundError`：
+
+使用 `.venv`，并确认已经执行 `python -m pip install -e .`。
+
+`streamlit` 未安装：
+
+```bash
+source .venv/bin/activate
+python -m pip install streamlit
+```
+
+`index.lock`：
+
+当前仓库在自动提交过程中偶发暂态 `index.lock`，直接重试非破坏性 `git add` / `git commit` 即可。
+
+真实模型调用失败：
+
+- 检查 `settings.yaml` 的 provider / model / api_key
+- 检查网络出口和 base URL
+- 对 `ragas` / `deepeval` 缺依赖时，当前实现会稳定返回 skip / 结构化失败，而不会直接拖垮流程
+
+## 10. 限制说明
+
+- 默认测试与验收流程偏向本地可重复、无真实网络依赖
+- 真实 provider 评估效果依赖外部模型与数据集质量
+- Dashboard 当前是 Streamlit 壳，不是多用户部署方案
+- Acceptance 脚本输出的是交付前本地摘要，不是长期任务编排器
