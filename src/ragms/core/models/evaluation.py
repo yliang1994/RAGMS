@@ -21,14 +21,16 @@ class EvaluationSample:
     sample_id: str
     query: str
     collection: str
+    dataset_name: str | None = None
     filters: dict[str, Any] = field(default_factory=dict)
     expected_chunk_ids: list[str] = field(default_factory=list)
     expected_sources: list[str] = field(default_factory=list)
     ground_truth_answer: str | None = None
     ground_truth_citations: list[dict[str, Any]] = field(default_factory=list)
-    labels: dict[str, Any] = field(default_factory=dict)
+    labels: list[str] = field(default_factory=list)
     evaluation_modes: list[str] = field(default_factory=lambda: ["retrieval"])
     dataset_version: str | None = None
+    sample_source: str | None = None
     config_snapshot: dict[str, Any] = field(default_factory=dict)
     retrieved_chunks: list[dict[str, Any]] = field(default_factory=list)
     generated_answer: str | None = None
@@ -60,14 +62,16 @@ class EvaluationSample:
             "sample_id": self.sample_id,
             "query": self.query,
             "collection": self.collection,
+            "dataset_name": self.dataset_name,
             "filters": dict(self.filters),
             "expected_chunk_ids": list(self.expected_chunk_ids),
             "expected_sources": list(self.expected_sources),
             "ground_truth_answer": self.ground_truth_answer,
             "ground_truth_citations": [dict(item) for item in self.ground_truth_citations],
-            "labels": dict(self.labels),
+            "labels": list(self.labels),
             "evaluation_modes": list(self.evaluation_modes),
             "dataset_version": self.dataset_version,
+            "sample_source": self.sample_source,
             "config_snapshot": dict(self.config_snapshot),
             "retrieved_chunks": [dict(item) for item in self.retrieved_chunks],
             "generated_answer": self.generated_answer,
@@ -137,7 +141,7 @@ def normalize_evaluation_sample(
     default_filters = dict((defaults or {}).get("filters") or {})
     sample_filters = dict(payload.get("filters") or {})
     merged["filters"] = {**default_filters, **sample_filters}
-    merged["labels"] = dict(merged.get("labels") or {})
+    merged["labels"] = [str(item).strip() for item in (merged.get("labels") or []) if str(item).strip()]
     merged["config_snapshot"] = dict(merged.get("config_snapshot") or {})
     merged["ground_truth_citations"] = list(merged.get("ground_truth_citations") or [])
     merged["expected_chunk_ids"] = list(merged.get("expected_chunk_ids") or [])

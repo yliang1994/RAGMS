@@ -1,0 +1,8 @@
+{
+  "sample_id": "golden_extra_001",
+  "query": "如何查看 Query Trace 对比？",
+  "evaluation_modes": ["retrieval"],
+  "expected_chunk_ids": ["chunk_trace_001"],
+  "expected_sources": ["query_trace.md"],
+  "labels": ["golden", "trace"]
+}

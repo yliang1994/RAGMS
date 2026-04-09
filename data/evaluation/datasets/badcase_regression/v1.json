@@ -1,0 +1,19 @@
+{
+  "dataset_name": "badcase_regression",
+  "dataset_version": "v1",
+  "collection": "real_c_ingestion_test",
+  "config_snapshot": {
+    "top_k": 8
+  },
+  "default_filters": {},
+  "samples": [
+    {
+      "sample_id": "badcase_001",
+      "query": "如何排查 rerank 超时后的降级结果？",
+      "evaluation_modes": ["retrieval"],
+      "expected_chunk_ids": ["chunk_dbg_009"],
+      "expected_sources": ["query_trace.md"],
+      "labels": ["badcase", "rerank", "fallback"]
+    }
+  ]
+}

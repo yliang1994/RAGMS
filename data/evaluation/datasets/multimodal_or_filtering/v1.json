@@ -1,0 +1,27 @@
+{
+  "dataset_name": "multimodal_or_filtering",
+  "dataset_version": "v1",
+  "collection": "real_c_ingestion_test",
+  "config_snapshot": {
+    "top_k": 6
+  },
+  "default_filters": {
+    "doc_type": "pdf"
+  },
+  "samples": [
+    {
+      "sample_id": "multi_001",
+      "query": "哪个页面支持图片预览与标签过滤？",
+      "evaluation_modes": ["retrieval", "answer"],
+      "expected_chunk_ids": ["chunk_ui_003"],
+      "expected_sources": ["dashboard_guide.pdf"],
+      "ground_truth_answer": "数据浏览器页支持图片预览、页码和标签过滤。",
+      "ground_truth_citations": [
+        {
+          "source_ref": "dashboard_guide.pdf#p5"
+        }
+      ],
+      "labels": ["multimodal", "filtering", "dashboard"]
+    }
+  ]
+}

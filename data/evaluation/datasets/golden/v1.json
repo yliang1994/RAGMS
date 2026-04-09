@@ -1,0 +1,25 @@
+{
+  "dataset_name": "golden",
+  "dataset_version": "v1",
+  "collection": "real_c_ingestion_test",
+  "config_snapshot": {
+    "top_k": 5
+  },
+  "default_filters": {},
+  "samples": [
+    {
+      "sample_id": "golden_001",
+      "query": "如何配置 Azure OpenAI？",
+      "evaluation_modes": ["retrieval", "answer"],
+      "expected_chunk_ids": ["chunk_cfg_001"],
+      "expected_sources": ["config_guide.pdf"],
+      "ground_truth_answer": "使用 settings.yaml 配置 endpoint、api_key 与 deployment。",
+      "ground_truth_citations": [
+        {
+          "source_ref": "config_guide.pdf#p3"
+        }
+      ],
+      "labels": ["golden", "config"]
+    }
+  ]
+}

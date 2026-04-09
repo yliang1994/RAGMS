@@ -2498,9 +2498,9 @@ dashboard:
 | 阶段 E | 9 | 9 | 100% |
 | 阶段 F | 6 | 6 | 100% |
 | 阶段 G | 8 | 9 | 112% |
-| 阶段 H | 9 | 1 | 11% |
+| 阶段 H | 9 | 2 | 22% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **70** | **85.4%** |
+| **总计** | **82** | **71** | **86.6%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -3460,7 +3460,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | 任务编号 | 任务名称 | 状态 | 完成日期 | 备注 |
 |---------|---------|------|---------|------|
 | H1 | 收敛评估输入、报告 schema 与前置依赖 | [x] | 2026-04-09 | evaluation sample/report schema, config snapshots, and query evaluation input contracts normalized |
-| H2 | 建立 golden/badcase 数据集、manifest 规范与加载器 | [ ] |  |  |
+| H2 | 建立 golden/badcase 数据集、manifest 规范与加载器 | [x] | 2026-04-09 | evaluation datasets, manifest defaults, and dataset loader shipped for golden, badcase, and multimodal/filtering samples |
 | H3 | 实现确定性指标与固定阈值回归测试 | [ ] |  |  |
 | H4 | 实现 `RagasEvaluator`、`DeepEvalEvaluator` 与后端适配层 | [ ] |  |  |
 | H5 | 实现 `CompositeEvaluator`、工厂装配与配置切换 | [ ] |  |  |
