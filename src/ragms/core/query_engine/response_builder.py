@@ -7,7 +7,7 @@ from typing import Any
 
 from mcp import types
 
-from ragms.core.models import HybridSearchResult, RetrievalCandidate
+from ragms.core.models import HybridSearchResult, QueryResponsePayload, RetrievalCandidate
 from ragms.storage.images.image_storage import ImageStorage
 from ragms.storage.sqlite.repositories.images import ImagesRepository
 
@@ -120,6 +120,31 @@ class ResponseBuilder:
         if debug_info is not None:
             payload["debug"] = debug_info
         return payload
+
+    def build_evaluation_input(
+        self,
+        *,
+        query: str,
+        answer: str,
+        citations: list[dict[str, Any]],
+        retrieved_chunks: list[dict[str, Any]],
+        trace_id: str | None,
+        config_snapshot: dict[str, Any] | None = None,
+        fallback_applied: bool = False,
+        fallback_reason: str | None = None,
+    ) -> QueryResponsePayload:
+        """Build the normalized response payload used by evaluation workflows."""
+
+        return QueryResponsePayload(
+            query=query,
+            answer=answer,
+            citations=citations,
+            retrieved_chunks=retrieved_chunks,
+            trace_id=trace_id,
+            fallback_applied=fallback_applied,
+            fallback_reason=fallback_reason,
+            config_snapshot=dict(config_snapshot or {}),
+        )
 
     @staticmethod
     def build_query_markdown_content(

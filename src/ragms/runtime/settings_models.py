@@ -153,3 +153,23 @@ class AppSettings(StrictModel):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     dashboard: DashboardSettings = Field(default_factory=DashboardSettings)
+
+
+def snapshot_runtime_config(settings: AppSettings) -> dict[str, object]:
+    """Return a compact JSON-safe config snapshot for traces and reports."""
+
+    return {
+        "environment": settings.environment,
+        "collection": settings.vector_store.collection,
+        "llm": {
+            "provider": settings.llm.provider,
+            "model": settings.llm.model,
+        },
+        "embedding": {
+            "provider": settings.embedding.provider,
+            "model": settings.embedding.model,
+            "batch_size": settings.embedding.batch_size,
+        },
+        "retrieval": settings.retrieval.model_dump(mode="python"),
+        "evaluation": settings.evaluation.model_dump(mode="python"),
+    }

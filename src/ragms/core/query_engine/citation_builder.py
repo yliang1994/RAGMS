@@ -18,6 +18,7 @@ class CitationBuilder:
             metadata = dict(candidate.metadata)
             citations.append(
                 {
+                    "citation_id": f"{candidate.chunk_id}:{index}",
                     "index": index,
                     "marker": f"[{index}]",
                     "chunk_id": candidate.chunk_id,
