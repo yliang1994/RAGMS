@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .base_embedding import BaseEmbedding
-from .base_evaluator import BaseEvaluator
+from .base_evaluator import BaseEvaluator, normalize_backend_metrics, serialize_backend_failure
 from .base_llm import BaseLLM
 from .base_loader import BaseLoader
 from .base_reranker import BaseReranker
@@ -22,4 +22,6 @@ __all__ = [
     "BaseTransform",
     "BaseVectorStore",
     "BaseVisionLLM",
+    "normalize_backend_metrics",
+    "serialize_backend_failure",
 ]
