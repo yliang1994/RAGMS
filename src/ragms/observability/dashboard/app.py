@@ -12,6 +12,7 @@ from ragms.core.management import DataService, TraceService
 from ragms.observability.dashboard.pages import (
     render_data_browser,
     render_ingestion_trace,
+    render_query_trace,
     render_system_overview,
 )
 from ragms.runtime.container import PlaceholderService, ServiceContainer, build_container
@@ -71,6 +72,7 @@ PAGE_REGISTRY = [
         key="query_trace",
         title="Query追踪",
         description="按 trace_id 查看查询链路详情。",
+        status="ready",
     ),
     DashboardPage(
         key="evaluation_panel",
@@ -182,6 +184,8 @@ def _render_page_payload(context: DashboardContext, active_page: str) -> dict[st
         return render_data_browser(context)
     if active_page == "ingestion_trace":
         return render_ingestion_trace(context)
+    if active_page == "query_trace":
+        return render_query_trace(context)
     return {
         "kind": "placeholder",
         "title": next(page.title for page in context.pages if page.key == active_page),
@@ -199,6 +203,9 @@ def _render_page(context: DashboardContext, active_page: str, renderer: Any) -> 
         return
     if active_page == "ingestion_trace":
         render_ingestion_trace(context, renderer=renderer)
+        return
+    if active_page == "query_trace":
+        render_query_trace(context, renderer=renderer)
         return
     placeholder = _render_page_payload(context, active_page)
     renderer.subheader(placeholder["title"])

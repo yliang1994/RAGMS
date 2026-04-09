@@ -163,8 +163,20 @@ class TraceService:
             "metric_deltas": {
                 "duration_ms": self._numeric_delta(left.get("duration_ms"), right.get("duration_ms")),
                 "stage_count": self._numeric_delta(len(left.get("stages") or []), len(right.get("stages") or [])),
+                "top_k_results": self._numeric_delta(
+                    len(left.get("top_k_results") or []),
+                    len(right.get("top_k_results") or []),
+                ),
+                "citation_count": self._query_metric_delta(left, right, stage_name="response_build", metadata_key="citation_count"),
+                "retrieved_count": self._query_metric_delta(left, right, stage_name="dense_retrieval", metadata_key="retrieved_count"),
             },
             "fallback_differences": fallback_differences,
+            "query_differences": {
+                "retrieval": self._query_metric_comparison(left, right, stage_name="dense_retrieval", metadata_key="retrieved_count"),
+                "response_build": self._query_metric_comparison(left, right, stage_name="response_build", metadata_key="citation_count"),
+                "rerank": self._query_metric_comparison(left, right, stage_name="rerank", metadata_key="backend"),
+                "answer_generation": self._query_metric_comparison(left, right, stage_name="answer_generation", metadata_key="provider"),
+            },
             "summary": {
                 "left_status": left.get("status"),
                 "right_status": right.get("status"),
@@ -272,3 +284,48 @@ class TraceService:
         if left_elapsed is None or right_elapsed is None:
             return None
         return int(left_elapsed) - int(right_elapsed)
+
+    @staticmethod
+    def _stage_by_name(trace: Mapping[str, Any], stage_name: str) -> Mapping[str, Any] | None:
+        for stage in trace.get("stages") or []:
+            if str(stage.get("stage_name") or "") == stage_name:
+                return stage
+        return None
+
+    @classmethod
+    def _query_metric_delta(
+        cls,
+        left: Mapping[str, Any],
+        right: Mapping[str, Any],
+        *,
+        stage_name: str,
+        metadata_key: str,
+    ) -> int | None:
+        left_stage = cls._stage_by_name(left, stage_name)
+        right_stage = cls._stage_by_name(right, stage_name)
+        left_value = None if left_stage is None else dict(left_stage.get("metadata") or {}).get(metadata_key)
+        right_value = None if right_stage is None else dict(right_stage.get("metadata") or {}).get(metadata_key)
+        if left_value is None or right_value is None:
+            return None
+        try:
+            return int(left_value) - int(right_value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _query_metric_comparison(
+        cls,
+        left: Mapping[str, Any],
+        right: Mapping[str, Any],
+        *,
+        stage_name: str,
+        metadata_key: str,
+    ) -> dict[str, Any]:
+        left_stage = cls._stage_by_name(left, stage_name)
+        right_stage = cls._stage_by_name(right, stage_name)
+        return {
+            "stage_name": stage_name,
+            "metric": metadata_key,
+            "left": None if left_stage is None else dict(left_stage.get("metadata") or {}).get(metadata_key),
+            "right": None if right_stage is None else dict(right_stage.get("metadata") or {}).get(metadata_key),
+        }

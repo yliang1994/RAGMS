@@ -57,6 +57,28 @@ def render_duration_chart(
     return payload
 
 
+def render_query_trace_comparison(
+    comparison: Mapping[str, Any],
+    *,
+    renderer: Any | None = None,
+) -> dict[str, Any]:
+    """Render or return a normalized comparison payload for two query traces."""
+
+    stage_chart = render_duration_chart(comparison)
+    payload = {
+        "left_trace_id": comparison.get("left_trace_id"),
+        "right_trace_id": comparison.get("right_trace_id"),
+        "stage_chart": stage_chart,
+        "metric_deltas": dict(comparison.get("metric_deltas") or {}),
+        "fallback_differences": list(comparison.get("fallback_differences") or []),
+        "query_differences": dict(comparison.get("query_differences") or {}),
+    }
+    if renderer is not None:
+        renderer.code(str(payload["metric_deltas"]), language="python")
+        render_duration_chart(stage_chart["points"], renderer=renderer)
+    return payload
+
+
 def _build_duration_series(items: Sequence[Mapping[str, Any]] | Mapping[str, Any]) -> list[dict[str, Any]]:
     if isinstance(items, Mapping) and "stage_comparisons" in items:
         points = []
