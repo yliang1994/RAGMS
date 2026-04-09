@@ -63,6 +63,8 @@ retrieval:
 evaluation:
   backends:
     - custom_metrics
+    - ragas
+    - deepeval
 
 observability:
   enabled: true

@@ -173,3 +173,29 @@ def snapshot_runtime_config(settings: AppSettings) -> dict[str, object]:
         "retrieval": settings.retrieval.model_dump(mode="python"),
         "evaluation": settings.evaluation.model_dump(mode="python"),
     }
+
+
+def resolve_evaluation_backends(
+    config: AppSettings | EvaluationSettings | dict[str, object] | None,
+) -> list[str]:
+    """Resolve evaluation backends in declared order with duplicates removed."""
+
+    if config is None:
+        backends = ["custom_metrics"]
+    elif isinstance(config, AppSettings):
+        backends = config.evaluation.backends
+    elif isinstance(config, EvaluationSettings):
+        backends = config.backends
+    else:
+        raw = config.get("backends") if "backends" in config else [config.get("provider", "custom_metrics")]
+        backends = raw if isinstance(raw, list) else [raw]
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for backend in backends:
+        normalized = str(backend).strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        resolved.append(normalized)
+    return resolved

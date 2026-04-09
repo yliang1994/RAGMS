@@ -10,7 +10,7 @@ from ragms.libs.providers.evaluators.custom_metrics_evaluator import CustomMetri
 from ragms.libs.providers.evaluators.deepeval_evaluator import DeepEvalEvaluator
 from ragms.libs.providers.evaluators.ragas_evaluator import RagasEvaluator
 from ragms.runtime.exceptions import RagMSError
-from ragms.runtime.settings_models import AppSettings, EvaluationSettings
+from ragms.runtime.settings_models import AppSettings, EvaluationSettings, resolve_evaluation_backends
 
 
 def _resolve_backend(backends: list[str] | tuple[str, ...] | None) -> str:
@@ -71,3 +71,20 @@ class EvaluatorFactory:
         if provider_class is None:
             raise RagMSError(f"Unknown evaluator provider: {provider}")
         return provider_class(**options)
+
+    @staticmethod
+    def create_stack(
+        config: AppSettings | EvaluationSettings | Mapping[str, Any] | None = None,
+    ) -> dict[str, BaseEvaluator]:
+        """Return all configured evaluators in execution order."""
+
+        backends = resolve_evaluation_backends(config)
+        if not backends:
+            raise RagMSError("Missing evaluator provider in configuration")
+        stack: dict[str, BaseEvaluator] = {}
+        for backend in backends:
+            provider_class = EvaluatorFactory._PROVIDERS.get(backend)
+            if provider_class is None:
+                raise RagMSError(f"Unknown evaluator provider: {backend}")
+            stack[backend] = provider_class()
+        return stack

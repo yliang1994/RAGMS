@@ -2498,9 +2498,9 @@ dashboard:
 | 阶段 E | 9 | 9 | 100% |
 | 阶段 F | 6 | 6 | 100% |
 | 阶段 G | 8 | 9 | 112% |
-| 阶段 H | 9 | 4 | 44% |
+| 阶段 H | 9 | 5 | 56% |
 | 阶段 I | 5 | 0 | 0% |
-| **总计** | **82** | **73** | **89.0%** |
+| **总计** | **82** | **74** | **90.2%** |
 
 **状态说明**：`[ ]` 未开始 | `[~]` 进行中 | `[x]` 已完成
 
@@ -3463,7 +3463,7 @@ Provider 实现后的统一测试约束（适用于 B4.1-B4.10）：
 | H2 | 建立 golden/badcase 数据集、manifest 规范与加载器 | [x] | 2026-04-09 | evaluation datasets, manifest defaults, and dataset loader shipped for golden, badcase, and multimodal/filtering samples |
 | H3 | 实现确定性指标与固定阈值回归测试 | [x] | 2026-04-09 | deterministic retrieval and answer metrics with fixed recall regression thresholds added for evaluation gating |
 | H4 | 实现 `RagasEvaluator`、`DeepEvalEvaluator` 与后端适配层 | [x] | 2026-04-09 | ragas and deepeval adapters normalized backend status, metric payloads, and predictable skip behavior |
-| H5 | 实现 `CompositeEvaluator`、工厂装配与配置切换 | [ ] |  |  |
+| H5 | 实现 `CompositeEvaluator`、工厂装配与配置切换 | [x] | 2026-04-09 | composite evaluator stack, backend resolution, and config-driven evaluation ordering implemented |
 | H6 | 实现 `EvalRunner`、`EvaluationTrace` 与报告持久化 | [ ] |  |  |
 | H7 | 实现 baseline 管理与稳定对比契约 | [ ] |  |  |
 | H8 | 打通 Dashboard 评估工作台与真实运行入口 | [ ] |  |  |
