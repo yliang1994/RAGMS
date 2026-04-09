@@ -40,6 +40,29 @@ class ReportService:
             return entries[:limit]
         return entries
 
+    def load_report_detail(self, run_id: str) -> dict[str, Any] | None:
+        """Load one report detail by run id from local report artifacts."""
+
+        for path in self._iter_report_files():
+            payload = self._load_report_payload(path)
+            resolved_run_id = payload.get("run_id") or path.stem
+            if str(resolved_run_id) != str(run_id):
+                continue
+            return {
+                "run_id": resolved_run_id,
+                "dataset_version": payload.get("dataset_version"),
+                "collection": payload.get("collection"),
+                "metrics_summary": dict(payload.get("metrics_summary") or {}),
+                "quality_gate_status": payload.get("quality_gate_status"),
+                "path": str(path),
+                "report": payload,
+                "navigation": [
+                    {"label": "跳转到系统总览", "target_page": "system_overview"},
+                    {"label": "跳转到数据浏览", "target_page": "data_browser", "collection": payload.get("collection")},
+                ],
+            }
+        return None
+
     def _iter_report_files(self) -> list[Path]:
         paths: list[Path] = []
         for directory in (self._runs_dir, self._reports_dir):

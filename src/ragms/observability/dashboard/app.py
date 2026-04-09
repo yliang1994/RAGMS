@@ -11,6 +11,7 @@ from ragms.core.evaluation import ReportService
 from ragms.core.management import DataService, DocumentAdminService, TraceService
 from ragms.observability.dashboard.pages import (
     render_data_browser,
+    render_evaluation_panel,
     render_ingestion_management,
     render_ingestion_trace,
     render_query_trace,
@@ -79,6 +80,7 @@ PAGE_REGISTRY = [
         key="evaluation_panel",
         title="评估面板",
         description="评估结果和报告读取占位页。",
+        status="ready",
     ),
 ]
 
@@ -186,6 +188,8 @@ def _render_page_payload(context: DashboardContext, active_page: str) -> dict[st
         return render_ingestion_trace(context)
     if active_page == "query_trace":
         return render_query_trace(context)
+    if active_page == "evaluation_panel":
+        return render_evaluation_panel(context)
     return {
         "kind": "placeholder",
         "title": next(page.title for page in context.pages if page.key == active_page),
@@ -210,9 +214,47 @@ def _render_page(context: DashboardContext, active_page: str, renderer: Any) -> 
     if active_page == "query_trace":
         render_query_trace(context, renderer=renderer)
         return
+    if active_page == "evaluation_panel":
+        render_evaluation_panel(context, renderer=renderer)
+        return
     placeholder = _render_page_payload(context, active_page)
     renderer.subheader(placeholder["title"])
     renderer.info(placeholder["description"])
+
+
+def resolve_dashboard_navigation_target(
+    context: DashboardContext,
+    target: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve one dashboard navigation payload into the destination page snapshot."""
+
+    target_page = str(target.get("target_page") or "").strip()
+    if target_page == "data_browser":
+        return render_data_browser(
+            context,
+            collection=target.get("collection"),
+            document_id=target.get("document_id"),
+            chunk_id=target.get("chunk_id"),
+        )
+    if target_page == "ingestion_trace":
+        trace_ids = target.get("trace_ids") or []
+        return render_ingestion_trace(
+            context,
+            trace_id=trace_ids[0] if trace_ids else target.get("trace_id"),
+        )
+    if target_page == "query_trace":
+        return render_query_trace(
+            context,
+            trace_id=target.get("trace_id"),
+            left_trace_id=target.get("left_trace_id"),
+            right_trace_id=target.get("right_trace_id"),
+        )
+    if target_page == "evaluation_panel":
+        return render_evaluation_panel(
+            context,
+            run_id=target.get("run_id"),
+        )
+    return _render_page_payload(context, target_page or "system_overview")
 
 
 def main(argv: Sequence[str] | None = None) -> int:

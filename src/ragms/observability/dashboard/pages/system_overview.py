@@ -100,6 +100,7 @@ def render_system_overview(
             {"label": "查看数据浏览", "target_page": "data_browser"},
             {"label": "查看 Ingestion 追踪", "target_page": "ingestion_trace"},
             {"label": "查看 Query 追踪", "target_page": "query_trace"},
+            {"label": "查看评估面板", "target_page": "evaluation_panel"},
         ],
     }
     if renderer is not None:
