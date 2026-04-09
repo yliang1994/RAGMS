@@ -11,6 +11,7 @@ from mcp.server.fastmcp.tools.base import Tool
 from ragms.mcp_server.tools import (
     bind_collections_tool,
     bind_documents_tool,
+    bind_evaluation_tool,
     bind_ingest_tool,
     bind_query_tool,
     bind_traces_tool,
@@ -165,7 +166,7 @@ def build_tool_registry(
         ToolDefinition(
             name="evaluate_collection",
             description="对指定集合执行检索或问答评估，产出结构化评估结果。",
-            handler=_evaluate_collection,
+            handler=_evaluate_collection if runtime is None else bind_evaluation_tool(runtime),
             input_schema=get_input_schema("evaluate_collection"),
         ),
     ]

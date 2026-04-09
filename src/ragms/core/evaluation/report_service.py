@@ -293,7 +293,7 @@ class ReportService:
             if isinstance(left, bool) or isinstance(right, bool):
                 continue
             if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-                deltas[key] = float(left) - float(right)
+                deltas[key] = round(float(left) - float(right), 6)
         return deltas
 
     @staticmethod

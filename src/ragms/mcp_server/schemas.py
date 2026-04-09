@@ -78,6 +78,7 @@ class EvaluationToolRequest(BaseToolRequest):
     dataset: str | None = None
     metrics: list[NonEmptyString] | None = None
     eval_options: JSONMapping | None = None
+    baseline_mode: str = "compare"
 
 
 TOOL_REQUEST_MODELS: dict[str, type[BaseToolRequest]] = {
